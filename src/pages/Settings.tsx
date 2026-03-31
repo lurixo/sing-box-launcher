@@ -37,6 +37,10 @@ export function Settings() {
       className="animate-in"
       style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 20 }}
     >
+      {/* Page Title */}
+      <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
+        Settings
+      </h1>
       {/* ─── Theme Mode ─── */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>

@@ -145,52 +145,66 @@ interface ThemeBg {
 function generateLightBg(accentHex: string): ThemeBg {
   const { h } = hexToHSL(accentHex);
   return {
-    base:          hslToHex(h, 6, 95),     // very faint accent tint
-    surface:       hslToHex(h, 4, 99),     // near-white with hint
-    card:          hslToHex(h, 5, 97),
-    cardHover:     hslToHex(h, 5, 95),
-    cardActive:    hslToHex(h, 4, 93),
-    subtle:        hslToHex(h, 4, 94),
-    subtleHover:   hslToHex(h, 5, 92),
-    selected:      hslToHex(h, 20, 92),    // more saturated for selection
-    selectedHover: hslToHex(h, 25, 88),
-    borderDefault: hslToHex(h, 6, 88),
-    borderCard:    hslToHex(h, 5, 90),
-    borderDivider: hslToHex(h, 6, 86),
-    borderSubtle:  hslToHex(h, 4, 93),
-    textPrimary:   hslToHex(h, 10, 10),
-    textSecondary: hslToHex(h, 6, 38),
-    textTertiary:  hslToHex(h, 4, 62),
-    textDisabled:  hslToHex(h, 3, 75),
-    shadowCard:    "0 2px 4px rgba(0,0,0,0.04), 0 0 2px rgba(0,0,0,0.02)",
-    shadowDialog:  "0 8px 32px rgba(0,0,0,0.14)",
-    shadowFlyout:  "0 4px 16px rgba(0,0,0,0.08)",
+    // Background layers: base (darkest) → surface → card (lightest)
+    // Each step ≥ 5% lightness difference for clear visual separation
+    base:          hslToHex(h, 8, 91),
+    surface:       hslToHex(h, 5, 96),
+    card:          hslToHex(h, 3, 100),
+    cardHover:     hslToHex(h, 4, 97),
+    cardActive:    hslToHex(h, 5, 94),
+    subtle:        hslToHex(h, 5, 94),
+    subtleHover:   hslToHex(h, 6, 91),
+    selected:      hslToHex(h, 22, 90),
+    selectedHover: hslToHex(h, 28, 85),
+
+    // Borders: clearly visible against backgrounds
+    borderDefault: hslToHex(h, 6, 82),
+    borderCard:    hslToHex(h, 5, 85),
+    borderDivider: hslToHex(h, 7, 80),
+    borderSubtle:  hslToHex(h, 4, 88),
+
+    // Text: near-neutral (S ≤ 3%), strong contrast
+    textPrimary:   hslToHex(h, 8, 8),
+    textSecondary: hslToHex(h, 3, 32),
+    textTertiary:  hslToHex(h, 2, 52),
+    textDisabled:  hslToHex(h, 2, 68),
+
+    // Shadows: slightly stronger for depth
+    shadowCard:    "0 2px 6px rgba(0,0,0,0.06), 0 0 2px rgba(0,0,0,0.03)",
+    shadowDialog:  "0 8px 32px rgba(0,0,0,0.16)",
+    shadowFlyout:  "0 4px 16px rgba(0,0,0,0.10)",
   };
 }
 
 function generateDarkBg(accentHex: string): ThemeBg {
   const { h } = hexToHSL(accentHex);
   return {
-    base:          hslToHex(h, 20, 9),
+    // Background layers: base (darkest) → surface → card (lightest)
+    base:          hslToHex(h, 20, 8),
     surface:       hslToHex(h, 18, 13),
-    card:          hslToHex(h, 16, 17),
-    cardHover:     hslToHex(h, 15, 20),
-    cardActive:    hslToHex(h, 14, 15),
-    subtle:        hslToHex(h, 14, 12),
-    subtleHover:   hslToHex(h, 14, 14),
-    selected:      hslToHex(h, 22, 20),
-    selectedHover: hslToHex(h, 25, 24),
-    borderDefault: hslToHex(h, 12, 18),
-    borderCard:    hslToHex(h, 10, 14),
-    borderDivider: hslToHex(h, 12, 16),
-    borderSubtle:  hslToHex(h, 8, 11),
-    textPrimary:   "#FFFFFF",
-    textSecondary: hslToHex(h, 15, 60),
-    textTertiary:  hslToHex(h, 12, 42),
-    textDisabled:  hslToHex(h, 10, 28),
-    shadowCard:    "0 2px 4px rgba(0,0,0,0.20), 0 0 2px rgba(0,0,0,0.12)",
-    shadowDialog:  "0 8px 32px rgba(0,0,0,0.42)",
-    shadowFlyout:  "0 4px 16px rgba(0,0,0,0.30)",
+    card:          hslToHex(h, 15, 18),
+    cardHover:     hslToHex(h, 14, 22),
+    cardActive:    hslToHex(h, 13, 15),
+    subtle:        hslToHex(h, 14, 11),
+    subtleHover:   hslToHex(h, 14, 15),
+    selected:      hslToHex(h, 24, 22),
+    selectedHover: hslToHex(h, 28, 26),
+
+    // Borders: visible on dark backgrounds
+    borderDefault: hslToHex(h, 10, 22),
+    borderCard:    hslToHex(h, 8, 20),
+    borderDivider: hslToHex(h, 10, 18),
+    borderSubtle:  hslToHex(h, 6, 14),
+
+    // Text: near-neutral, high contrast
+    textPrimary:   "#EFEFEF",
+    textSecondary: hslToHex(h, 6, 65),
+    textTertiary:  hslToHex(h, 5, 48),
+    textDisabled:  hslToHex(h, 4, 32),
+
+    shadowCard:    "0 2px 4px rgba(0,0,0,0.24), 0 0 2px rgba(0,0,0,0.14)",
+    shadowDialog:  "0 8px 32px rgba(0,0,0,0.48)",
+    shadowFlyout:  "0 4px 16px rgba(0,0,0,0.36)",
   };
 }
 

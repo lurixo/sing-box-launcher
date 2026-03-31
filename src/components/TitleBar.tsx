@@ -21,7 +21,7 @@ export function TitleBar() {
 
   return (
     <div className="titlebar">
-      <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.02em" }}>
+      <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.02em", color: "var(--text-primary)" }}>
         sing-box launcher
       </span>
 

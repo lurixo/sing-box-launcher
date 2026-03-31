@@ -42,7 +42,10 @@ export function Dashboard() {
       className="animate-in"
       style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 20 }}
     >
-      {/* Error InfoBar */}
+      {/* Page Title */}
+      <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
+        Dashboard
+      </h1>
       {error && (
         <div className="infobar error">
           <span style={{ flex: 1 }}>{error}</span>

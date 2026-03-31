@@ -50,15 +50,18 @@ export function Proxies() {
       <div
         className="animate-in"
         style={{
-          padding: "48px 28px",
+          padding: "24px 28px",
           display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--text-tertiary)",
-          fontSize: 14,
+          flexDirection: "column",
+          gap: 20,
         }}
       >
-        Start the core to view proxy groups.
+        <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
+          Proxies
+        </h1>
+        <div style={{ padding: "24px 0", textAlign: "center", color: "var(--text-tertiary)", fontSize: 14 }}>
+          Start the core to view proxy groups.
+        </div>
       </div>
     );
   }
@@ -68,23 +71,29 @@ export function Proxies() {
       <div
         className="animate-in"
         style={{
-          padding: "48px 28px",
+          padding: "24px 28px",
           display: "flex",
           flexDirection: "column",
-          alignItems: "center",
-          gap: 12,
-          color: "var(--text-tertiary)",
-          fontSize: 14,
+          gap: 20,
         }}
       >
-        <span className="progress-ring" />
-        Loading proxy groups…
+        <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
+          Proxies
+        </h1>
+        <div style={{ padding: "24px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, color: "var(--text-tertiary)", fontSize: 14 }}>
+          <span className="progress-ring" />
+          Loading proxy groups…
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="animate-in" style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+    <div className="animate-in" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, padding: "20px 28px 12px", color: "var(--text-primary)", flexShrink: 0 }}>
+        Proxies
+      </h1>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
       {/* Group List */}
       <div
         style={{
@@ -271,6 +280,7 @@ export function Proxies() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }
