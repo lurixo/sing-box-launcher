@@ -161,4 +161,4 @@ The `release.yml` workflow will:
 
 ## License
 
-MIT
+GPL-3.0
