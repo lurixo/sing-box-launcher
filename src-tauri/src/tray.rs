@@ -1,4 +1,5 @@
 use tauri::{
+use tauri::Emitter;
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},

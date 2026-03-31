@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::info;
 
 use crate::config::{self, ConfigInfo};
 use crate::error::AppError;
