@@ -9,7 +9,7 @@ import {
   PlugConnectedRegular,
   FolderOpenRegular,
 } from "@fluentui/react-icons";
-import { useAppStore } from "@/stores/appStore";
+import { useAppStore } from "../stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
 
 function formatUptime(secs: number): string {

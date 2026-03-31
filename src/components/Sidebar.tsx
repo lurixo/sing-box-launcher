@@ -4,8 +4,8 @@ import {
   SettingsRegular,
   NavigationRegular,
 } from "@fluentui/react-icons";
-import { useAppStore } from "@/stores/appStore";
-import type { Page } from "@/types";
+import { useAppStore } from "../stores/appStore";
+import type { Page } from "../types";
 
 const navItems: { id: Page; icon: React.ReactNode; label: string }[] = [
   { id: "dashboard", icon: <BoardRegular />, label: "Dashboard" },

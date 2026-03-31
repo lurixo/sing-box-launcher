@@ -1,12 +1,12 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { TitleBar } from "@/components/TitleBar";
-import { Sidebar } from "@/components/Sidebar";
-import { Dashboard } from "@/pages/Dashboard";
-import { Proxies } from "@/pages/Proxies";
-import { Settings } from "@/pages/Settings";
-import { useAppStore } from "@/stores/appStore";
-import type { CoreStatus, ProxyGroup } from "@/types";
+import { TitleBar } from "./components/TitleBar";
+import { Sidebar } from "./components/Sidebar";
+import { Dashboard } from "./pages/Dashboard";
+import { Proxies } from "./pages/Proxies";
+import { Settings } from "./pages/Settings";
+import { useAppStore } from "../stores/appStore";
+import type { CoreStatus, ProxyGroup } from "../types";
 
 export function App() {
   const page = useAppStore((s) => s.page);

@@ -4,7 +4,7 @@ import {
   SearchRegular,
   CheckmarkCircleFilled,
 } from "@fluentui/react-icons";
-import { useAppStore } from "@/stores/appStore";
+import { useAppStore } from "../stores/appStore";
 
 function DelayBadge({ delay }: { delay?: number }) {
   if (delay === undefined) return null;

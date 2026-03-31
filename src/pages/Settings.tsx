@@ -3,8 +3,8 @@ import {
   WeatherMoonRegular,
   DesktopRegular,
 } from "@fluentui/react-icons";
-import { useAppStore } from "@/stores/appStore";
-import type { Theme } from "@/types";
+import { useAppStore } from "../stores/appStore";
+import type { Theme } from "../types";
 
 const themes: { id: Theme; icon: React.ReactNode; label: string }[] = [
   { id: "light", icon: <WeatherSunnyRegular />, label: "Light" },

@@ -7,7 +7,7 @@ import type {
   DelayMap,
   Page,
   Theme,
-} from "@/types";
+} from "../types";
 
 interface AppState {
   // Navigation
