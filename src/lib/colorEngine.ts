@@ -163,11 +163,11 @@ function generateLightBg(accentHex: string): ThemeBg {
     borderDivider: hslToHex(h, 7, 80),
     borderSubtle:  hslToHex(h, 4, 88),
 
-    // Text: near-neutral (S ≤ 3%), strong contrast
-    textPrimary:   hslToHex(h, 8, 8),
-    textSecondary: hslToHex(h, 3, 32),
-    textTertiary:  hslToHex(h, 2, 52),
-    textDisabled:  hslToHex(h, 2, 68),
+    // Text: pure neutral gray (S=0), maximum readability
+    textPrimary:   hslToHex(h, 5, 8),
+    textSecondary: hslToHex(h, 2, 30),
+    textTertiary:  hslToHex(h, 0, 44),
+    textDisabled:  hslToHex(h, 0, 60),
 
     // Shadows: slightly stronger for depth
     shadowCard:    "0 2px 6px rgba(0,0,0,0.06), 0 0 2px rgba(0,0,0,0.03)",
@@ -198,9 +198,9 @@ function generateDarkBg(accentHex: string): ThemeBg {
 
     // Text: near-neutral, high contrast
     textPrimary:   "#EFEFEF",
-    textSecondary: hslToHex(h, 6, 65),
-    textTertiary:  hslToHex(h, 5, 48),
-    textDisabled:  hslToHex(h, 4, 32),
+    textSecondary: hslToHex(h, 3, 68),
+    textTertiary:  hslToHex(h, 0, 55),
+    textDisabled:  hslToHex(h, 0, 38),
 
     shadowCard:    "0 2px 4px rgba(0,0,0,0.24), 0 0 2px rgba(0,0,0,0.14)",
     shadowDialog:  "0 8px 32px rgba(0,0,0,0.48)",
@@ -212,6 +212,45 @@ function generateDarkBg(accentHex: string): ThemeBg {
 
 export function getTextOnAccent(accentHex: string): string {
   return contrastRatio(accentHex, "#FFFFFF") >= 4.5 ? "#FFFFFF" : "#1A1A1A";
+}
+
+// ─── Accent Button Background: guarantees ≥ 5:1 with text ─────────────────
+// If accent-default doesn't provide enough contrast with white/dark text,
+// progressively darken (or lighten) until we hit 5:1.
+
+function ensureButtonContrast(accentHex: string): { bg: string; hover: string; active: string; text: string } {
+  const { h, s, l } = hexToHSL(accentHex);
+  const white = "#FFFFFF";
+  const dark = "#1A1A1A";
+
+  // Try darkening first (prefer white text on dark bg)
+  for (let offset = 0; offset <= 25; offset += 3) {
+    const candidate = hslToHex(h, s, Math.max(0, l - offset));
+    if (contrastRatio(candidate, white) >= 5) {
+      return {
+        bg: candidate,
+        hover: hslToHex(h, Math.max(0, s - 5), Math.max(0, l - offset + 5)),
+        active: hslToHex(h, s, Math.max(0, l - offset - 5)),
+        text: white,
+      };
+    }
+  }
+
+  // Very bright accent — use dark text on lighter bg
+  for (let offset = 0; offset <= 25; offset += 3) {
+    const candidate = hslToHex(h, s, Math.min(100, l + offset));
+    if (contrastRatio(candidate, dark) >= 5) {
+      return {
+        bg: candidate,
+        hover: hslToHex(h, Math.max(0, s - 5), Math.min(100, l + offset + 5)),
+        active: hslToHex(h, s, Math.min(100, l + offset - 5)),
+        text: dark,
+      };
+    }
+  }
+
+  // Fallback
+  return { bg: accentHex, hover: accentHex, active: accentHex, text: white };
 }
 
 // ─── Status Colors per theme ────────────────────────────────────────────────
@@ -251,6 +290,7 @@ export function applyThemeTokens(accent: string, mode: ThemeMode) {
   const bg = isDark ? generateDarkBg(accent) : generateLightBg(accent);
   const status = getStatusColors(isDark);
   const textOnAccent = getTextOnAccent(accent);
+  const btn = ensureButtonContrast(accent);
 
   // ─── Accent color scale ───
   root.style.setProperty("--accent-default", shades.default);
@@ -260,6 +300,12 @@ export function applyThemeTokens(accent: string, mode: ThemeMode) {
   root.style.setProperty("--accent-dark-1", shades.dark1);
   root.style.setProperty("--accent-dark-2", shades.dark2);
   root.style.setProperty("--accent-dark-3", shades.dark3);
+
+  // ─── Accent button (guaranteed ≥ 5:1 contrast) ───
+  root.style.setProperty("--accent-btn-bg", btn.bg);
+  root.style.setProperty("--accent-btn-hover", btn.hover);
+  root.style.setProperty("--accent-btn-active", btn.active);
+  root.style.setProperty("--accent-btn-text", btn.text);
 
   // ─── Backgrounds ───
   root.style.setProperty("--bg-base", bg.base);

@@ -173,37 +173,39 @@ export function Settings() {
           </>
         )}
 
-        {/* Live accent preview */}
-        <div style={{ marginTop: 16, display: "flex", gap: 4, alignItems: "center" }}>
-          <span style={{ fontSize: 12, color: "var(--text-secondary)", marginRight: 8 }}>
-            Preview:
-          </span>
-          {(
-            [
-              ["dark-3", "var(--accent-dark-3)"],
-              ["dark-2", "var(--accent-dark-2)"],
-              ["dark-1", "var(--accent-dark-1)"],
-              ["default", "var(--accent-default)"],
-              ["light-1", "var(--accent-light-1)"],
-              ["light-2", "var(--accent-light-2)"],
-              ["light-3", "var(--accent-light-3)"],
-            ] as const
-          ).map(([label, cssVar]) => (
-            <div
-              key={label}
-              title={label}
-              style={{
-                width: label === "default" ? 28 : 20,
-                height: label === "default" ? 28 : 20,
-                borderRadius: "50%",
-                background: cssVar,
-                border: label === "default"
-                  ? "2px solid var(--text-primary)"
-                  : "1px solid var(--border-default)",
-                transition: "background 0.2s ease",
-              }}
-            />
-          ))}
+        {/* Live accent scale preview */}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
+            Accent scale
+          </div>
+          <div
+            style={{
+              display: "flex",
+              borderRadius: "var(--radius-sm)",
+              overflow: "hidden",
+              height: 28,
+            }}
+          >
+            {(
+              [
+                "var(--accent-dark-3)",
+                "var(--accent-dark-2)",
+                "var(--accent-dark-1)",
+                "var(--accent-default)",
+                "var(--accent-light-1)",
+                "var(--accent-light-2)",
+                "var(--accent-light-3)",
+              ] as const
+            ).map((cssVar, i) => (
+              <div
+                key={i}
+                style={{
+                  flex: 1,
+                  background: cssVar,
+                }}
+              />
+            ))}
+          </div>
         </div>
       </div>
 

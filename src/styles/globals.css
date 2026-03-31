@@ -164,12 +164,12 @@ html, body, #root {
 .fluent-btn:active { background: var(--bg-card-active); border-color: var(--border-divider); }
 
 .fluent-btn.accent {
-  background: var(--accent-default);
+  background: var(--accent-btn-bg);
   border-color: transparent;
-  color: var(--text-on-accent);
+  color: var(--accent-btn-text);
 }
-.fluent-btn.accent:hover { background: var(--accent-light-1); }
-.fluent-btn.accent:active { background: var(--accent-dark-1); }
+.fluent-btn.accent:hover { background: var(--accent-btn-hover); }
+.fluent-btn.accent:active { background: var(--accent-btn-active); }
 .fluent-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─── Nav Item ───────────────────────────────────────────────────────────── */
