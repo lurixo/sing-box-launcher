@@ -1,0 +1,42 @@
+[package]
+name = "sing-box-launcher"
+version = "0.1.0"
+description = "A Tauri v2 GUI for managing sing-box proxy core"
+authors = ["sing-box-launcher contributors"]
+edition = "2024"
+rust-version = "1.85"
+
+[lib]
+name = "sing_box_launcher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.10", features = [] }
+
+[dependencies]
+tauri = { version = "2.10", features = ["tray-icon"] }
+tauri-plugin-shell = "2.3"
+tauri-plugin-autostart = "2.5"
+tokio = { version = "~1.47", features = ["full"] }
+reqwest = { version = "0.13", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+log = "0.4"
+urlencoding = "2.1"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
+windows = { version = "0.61", features = [
+    "Win32_Networking_WinInet",
+    "Win32_Foundation",
+] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "s"
