@@ -2,7 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   DismissRegular,
   MaximizeRegular,
-  MinimizeRegular,
+  SubtractRegular,
   SquareMultipleRegular,
 } from "@fluentui/react-icons";
 import { useState, useEffect } from "react";
@@ -31,7 +31,7 @@ export function TitleBar() {
           onClick={() => appWindow.minimize()}
           aria-label="Minimize"
         >
-          <MinimizeRegular style={{ fontSize: 16 }} />
+          <SubtractRegular style={{ fontSize: 16 }} />
         </button>
         <button
           className="titlebar-btn"

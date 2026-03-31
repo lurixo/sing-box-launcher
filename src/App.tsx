@@ -5,15 +5,14 @@ import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
 import { Proxies } from "./pages/Proxies";
 import { Settings } from "./pages/Settings";
-import { useAppStore } from "../stores/appStore";
-import type { CoreStatus, ProxyGroup } from "../types";
+import { useAppStore } from "./stores/appStore";
+import type { CoreStatus, ProxyGroup } from "./types";
 
 export function App() {
   const page = useAppStore((s) => s.page);
   const fetchStatus = useAppStore((s) => s.fetchStatus);
   const setStatus = useAppStore((s) => s.setStatus);
   const setGroups = useAppStore((s) => s.setGroups);
-  const fetchGroups = useAppStore((s) => s.fetchGroups);
 
   // Initialize: fetch status and set up event listeners
   useEffect(() => {
