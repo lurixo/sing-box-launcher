@@ -51,6 +51,6 @@
     "shell": {
       "open": true
     },
-    "autostart": {}
+    "autostart": null
   }
 }
