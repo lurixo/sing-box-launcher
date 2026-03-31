@@ -16,7 +16,7 @@
     "core:window:allow-set-focus",
     "core:window:allow-is-maximized",
     "core:window:allow-toggle-maximize",
-    "core:tray-icon:default",
+    "core:tray:default",
     "shell:default",
     "autostart:default"
   ]
