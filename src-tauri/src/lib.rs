@@ -1,4 +1,5 @@
 use tauri::Emitter;
+mod accent;
 mod clash;
 mod config;
 mod error;
@@ -243,6 +244,7 @@ pub fn run() {
             switch_proxy,
             test_group_delay,
             open_base_dir,
+            accent::get_system_accent,
         ])
         .setup(move |app| {
             dlog(&dl_setup, "setup: entering closure");

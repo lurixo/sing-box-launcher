@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { applyThemeTokens, type ThemeMode } from "../lib/colorEngine";
 import type {
   CoreStatus,
   ConfigInfo,
@@ -18,7 +19,12 @@ interface AppState {
 
   // Theme
   theme: Theme;
+  accentColor: string;
+  accentSource: "system" | "manual";
   setTheme: (theme: Theme) => void;
+  setAccentColor: (hex: string) => void;
+  setAccentSource: (source: "system" | "manual") => void;
+  fetchSystemAccent: () => Promise<void>;
 
   // Core status
   status: CoreStatus;
@@ -56,6 +62,31 @@ const defaultStatus: CoreStatus = {
   proxy_enabled: false,
 };
 
+// ─── Persistence ────────────────────────────────────────────────────────────
+
+const STORAGE_THEME = "sb-theme";
+const STORAGE_ACCENT = "sb-accent";
+const STORAGE_ACCENT_SRC = "sb-accent-source";
+const DEFAULT_ACCENT = "#0078D4";
+
+function load(key: string, fallback: string): string {
+  try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
+}
+function save(key: string, val: string) {
+  try { localStorage.setItem(key, val); } catch { /* noop */ }
+}
+
+// ─── Resolve system preference → ThemeMode ──────────────────────────────────
+
+function resolveMode(theme: Theme): ThemeMode {
+  if (theme === "system") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return theme;
+}
+
+// ─── Store ──────────────────────────────────────────────────────────────────
+
 export const useAppStore = create<AppState>((set, get) => ({
   // Navigation
   page: "dashboard",
@@ -64,10 +95,42 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
   // Theme
-  theme: "system",
+  theme: load(STORAGE_THEME, "system") as Theme,
+  accentColor: load(STORAGE_ACCENT, DEFAULT_ACCENT),
+  accentSource: load(STORAGE_ACCENT_SRC, "system") as "system" | "manual",
+
   setTheme: (theme) => {
     set({ theme });
-    applyTheme(theme);
+    save(STORAGE_THEME, theme);
+    applyThemeTokens(get().accentColor, resolveMode(theme));
+  },
+
+  setAccentColor: (hex) => {
+    set({ accentColor: hex, accentSource: "manual" });
+    save(STORAGE_ACCENT, hex);
+    save(STORAGE_ACCENT_SRC, "manual");
+    applyThemeTokens(hex, resolveMode(get().theme));
+  },
+
+  setAccentSource: (source) => {
+    set({ accentSource: source });
+    save(STORAGE_ACCENT_SRC, source);
+    if (source === "system") {
+      get().fetchSystemAccent();
+    }
+  },
+
+  fetchSystemAccent: async () => {
+    try {
+      const hex = await invoke<string>("get_system_accent");
+      if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+        set({ accentColor: hex });
+        save(STORAGE_ACCENT, hex);
+        applyThemeTokens(hex, resolveMode(get().theme));
+      }
+    } catch {
+      // Fallback: keep current accent
+    }
   },
 
   // Core status
@@ -97,7 +160,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       await invoke<ConfigInfo>("start_core");
       const status = await invoke<CoreStatus>("get_status");
       set({ status, loading: false });
-      // Groups will arrive via event, but also fetch directly
       setTimeout(() => get().fetchGroups(), 1500);
     } catch (e) {
       set({ error: String(e), loading: false });
@@ -109,13 +171,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       await invoke("stop_core");
       const status = await invoke<CoreStatus>("get_status");
-      set({
-        status,
-        loading: false,
-        groups: [],
-        selectedGroup: null,
-        delays: {},
-      });
+      set({ status, loading: false, groups: [], selectedGroup: null, delays: {} });
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -152,19 +208,16 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? get().selectedGroup
           : groups[0]?.name ?? null;
       set({ groups, selectedGroup });
-    } catch (e) {
-      // Groups not ready yet, ignore
+    } catch {
+      // Groups not ready yet
     }
   },
 
   switchProxy: async (group, node) => {
     try {
       await invoke("switch_proxy", { group, node });
-      // Update local state immediately for responsiveness
       set((s) => ({
-        groups: s.groups.map((g) =>
-          g.name === group ? { ...g, now: node } : g
-        ),
+        groups: s.groups.map((g) => g.name === group ? { ...g, now: node } : g),
       }));
     } catch (e) {
       set({ error: String(e) });
@@ -175,10 +228,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ testingGroup: group });
     try {
       const result = await invoke<DelayMap>("test_group_delay", { group });
-      set((s) => ({
-        delays: { ...s.delays, [group]: result },
-        testingGroup: null,
-      }));
+      set((s) => ({ delays: { ...s.delays, [group]: result }, testingGroup: null }));
     } catch (e) {
       set({ error: String(e), testingGroup: null });
     }
@@ -186,7 +236,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectGroup: (group) => set({ selectedGroup: group }),
 
-  // Internal
   setStatus: (status) => set({ status }),
   setGroups: (groups) => {
     const selectedGroup =
@@ -198,27 +247,29 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearError: () => set({ error: null }),
 }));
 
-function applyTheme(theme: Theme) {
-  const root = document.documentElement;
-  if (theme === "system") {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    root.classList.toggle("dark", prefersDark);
-  } else {
-    root.classList.toggle("dark", theme === "dark");
-  }
-}
+// ─── Initialization ─────────────────────────────────────────────────────────
 
-// Listen for system theme changes
 if (typeof window !== "undefined") {
+  // Listen for OS theme changes
   window
     .matchMedia("(prefers-color-scheme: dark)")
     .addEventListener("change", () => {
-      const theme = useAppStore.getState().theme;
+      const { theme, accentColor } = useAppStore.getState();
       if (theme === "system") {
-        applyTheme("system");
+        applyThemeTokens(accentColor, resolveMode("system"));
       }
     });
 
   // Apply initial theme
-  applyTheme("system");
+  const { theme, accentColor, accentSource } = useAppStore.getState();
+
+  // If following system accent, fetch it first
+  if (accentSource === "system") {
+    useAppStore.getState().fetchSystemAccent().then(() => {
+      const current = useAppStore.getState().accentColor;
+      applyThemeTokens(current, resolveMode(theme));
+    });
+  } else {
+    applyThemeTokens(accentColor, resolveMode(theme));
+  }
 }

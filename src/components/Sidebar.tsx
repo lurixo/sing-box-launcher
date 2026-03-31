@@ -24,7 +24,7 @@ export function Sidebar() {
       style={{
         width: collapsed ? "var(--sidebar-collapsed)" : "var(--sidebar-width)",
         transition: "width 0.2s ease",
-        borderRight: "1px solid var(--fluent-border-divider)",
+        borderRight: "1px solid var(--border-divider)",
         display: "flex",
         flexDirection: "column",
         padding: "8px 6px",

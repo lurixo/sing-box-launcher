@@ -1,50 +1,59 @@
 @import "tailwindcss";
 
-/* ─── Fluent Design Tokens ───────────────────────────────────────────────── */
+/* ─── Theme Tokens ───────────────────────────────────────────────────────────
+   Fallback values only. The JS color engine overwrites all of these on load.
+   Components must reference tokens — never raw hex.
+   ──────────────────────────────────────────────────────────────────────────── */
+
 @theme {
-  --color-accent: #0078D4;
-  --color-accent-hover: #106EBE;
-  --color-accent-active: #005A9E;
-  --color-accent-light: #60CDFF;
-
-  --color-success: #0F7B0F;
-  --color-warning: #9D5D00;
-  --color-danger: #C42B1C;
-  --color-info: #0078D4;
-
   --font-sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
-
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
 }
 
-/* ─── Light Theme (default) ──────────────────────────────────────────────── */
 :root {
-  --fluent-bg-solid: #F3F3F3;
-  --fluent-bg-mica: rgba(243, 243, 243, 0.72);
-  --fluent-bg-acrylic: rgba(252, 252, 252, 0.65);
-  --fluent-bg-card: rgba(255, 255, 255, 0.70);
-  --fluent-bg-card-hover: rgba(255, 255, 255, 0.85);
-  --fluent-bg-smoke: rgba(0, 0, 0, 0.30);
-  --fluent-bg-layer: #FFFFFF;
-  --fluent-bg-subtle: rgba(0, 0, 0, 0.024);
-  --fluent-bg-subtle-hover: rgba(0, 0, 0, 0.037);
+  --accent-default: #0078D4;
+  --accent-light-1: #1a8ae6;
+  --accent-light-2: #4da6ee;
+  --accent-light-3: #80c2f5;
+  --accent-dark-1: #006abc;
+  --accent-dark-2: #005ba3;
+  --accent-dark-3: #004080;
 
-  --fluent-text-primary: #1A1A1A;
-  --fluent-text-secondary: #616161;
-  --fluent-text-tertiary: #9E9E9E;
-  --fluent-text-disabled: #BDBDBD;
-  --fluent-text-on-accent: #FFFFFF;
+  --bg-base: #F0F2F3;
+  --bg-surface: #FAFCFD;
+  --bg-card: #F5F7F8;
+  --bg-card-hover: #F0F2F3;
+  --bg-card-active: #ECEEF0;
+  --bg-subtle: #EEF0F2;
+  --bg-subtle-hover: #EAECED;
+  --bg-selected: #DCE8F0;
+  --bg-selected-hover: #CDDCE8;
 
-  --fluent-border-default: rgba(0, 0, 0, 0.06);
-  --fluent-border-card: rgba(0, 0, 0, 0.05);
-  --fluent-border-divider: rgba(0, 0, 0, 0.08);
-  --fluent-border-subtle: rgba(0, 0, 0, 0.03);
+  --text-primary: #191B1D;
+  --text-secondary: #596066;
+  --text-tertiary: #969B9F;
+  --text-disabled: #BCC0C3;
+  --text-on-accent: #FFFFFF;
 
-  --fluent-shadow-card: 0 2px 4px rgba(0, 0, 0, 0.04), 0 0 2px rgba(0, 0, 0, 0.02);
-  --fluent-shadow-dialog: 0 8px 32px rgba(0, 0, 0, 0.14);
-  --fluent-shadow-flyout: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --border-default: #DDE0E3;
+  --border-card: #E2E5E8;
+  --border-divider: #D6DADD;
+  --border-subtle: #ECEEEF;
+  --border-accent: #005ba3;
+  --border-focus: #0078D4;
+
+  --shadow-card: 0 2px 4px rgba(0,0,0,0.04), 0 0 2px rgba(0,0,0,0.02);
+  --shadow-dialog: 0 8px 32px rgba(0,0,0,0.14);
+  --shadow-flyout: 0 4px 16px rgba(0,0,0,0.08);
+
+  --status-success: #0F7B0F;
+  --status-success-bg: rgba(15, 123, 15, 0.08);
+  --status-warning: #9D5D00;
+  --status-warning-bg: rgba(157, 93, 0, 0.08);
+  --status-danger: #C42B1C;
+  --status-danger-bg: rgba(196, 43, 28, 0.08);
 
   --titlebar-height: 32px;
   --sidebar-width: 200px;
@@ -53,37 +62,8 @@
   color-scheme: light;
 }
 
-/* ─── Dark Theme ─────────────────────────────────────────────────────────── */
-:root.dark {
-  --fluent-bg-solid: #202020;
-  --fluent-bg-mica: rgba(32, 32, 32, 0.80);
-  --fluent-bg-acrylic: rgba(44, 44, 44, 0.70);
-  --fluent-bg-card: rgba(255, 255, 255, 0.05);
-  --fluent-bg-card-hover: rgba(255, 255, 255, 0.08);
-  --fluent-bg-smoke: rgba(0, 0, 0, 0.50);
-  --fluent-bg-layer: #2B2B2B;
-  --fluent-bg-subtle: rgba(255, 255, 255, 0.04);
-  --fluent-bg-subtle-hover: rgba(255, 255, 255, 0.06);
-
-  --fluent-text-primary: #FFFFFF;
-  --fluent-text-secondary: #C8C8C8;
-  --fluent-text-tertiary: #8A8A8A;
-  --fluent-text-disabled: #5C5C5C;
-  --fluent-text-on-accent: #FFFFFF;
-
-  --fluent-border-default: rgba(255, 255, 255, 0.07);
-  --fluent-border-card: rgba(255, 255, 255, 0.05);
-  --fluent-border-divider: rgba(255, 255, 255, 0.08);
-  --fluent-border-subtle: rgba(255, 255, 255, 0.03);
-
-  --fluent-shadow-card: 0 2px 4px rgba(0, 0, 0, 0.14), 0 0 2px rgba(0, 0, 0, 0.08);
-  --fluent-shadow-dialog: 0 8px 32px rgba(0, 0, 0, 0.36);
-  --fluent-shadow-flyout: 0 4px 16px rgba(0, 0, 0, 0.24);
-
-  color-scheme: dark;
-}
-
 /* ─── Base Styles ────────────────────────────────────────────────────────── */
+
 *,
 *::before,
 *::after {
@@ -97,36 +77,29 @@ html, body, #root {
   overflow: hidden;
   font-family: var(--font-sans);
   background: transparent;
-  color: var(--fluent-text-primary);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   font-size: 14px;
   line-height: 1.43;
   user-select: none;
 }
 
-/* ─── Scrollbar (Fluent style) ───────────────────────────────────────────── */
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--fluent-text-tertiary);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--fluent-text-secondary);
-}
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
 
-/* ─── Custom Title Bar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--text-tertiary); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* ─── Title Bar ──────────────────────────────────────────────────────────── */
+
 .titlebar {
   height: var(--titlebar-height);
   display: flex;
   align-items: center;
   padding-left: 12px;
   font-size: 12px;
-  color: var(--fluent-text-secondary);
+  color: var(--text-secondary);
   -webkit-app-region: drag;
   flex-shrink: 0;
 }
@@ -146,36 +119,28 @@ html, body, #root {
   height: var(--titlebar-height);
   border: none;
   background: transparent;
-  color: var(--fluent-text-primary);
+  color: var(--text-primary);
   cursor: pointer;
   transition: background 0.1s;
 }
 
-.titlebar-btn:hover {
-  background: var(--fluent-bg-subtle-hover);
-}
+.titlebar-btn:hover { background: var(--bg-subtle-hover); }
+.titlebar-btn.close:hover { background: var(--status-danger); color: white; }
 
-.titlebar-btn.close:hover {
-  background: #C42B1C;
-  color: white;
-}
+/* ─── Card ───────────────────────────────────────────────────────────────── */
 
-/* ─── Fluent Card ────────────────────────────────────────────────────────── */
 .fluent-card {
-  background: var(--fluent-bg-card);
-  border: 1px solid var(--fluent-border-card);
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
   border-radius: var(--radius-md);
-  box-shadow: var(--fluent-shadow-card);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-card);
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 
-.fluent-card:hover {
-  background: var(--fluent-bg-card-hover);
-}
+.fluent-card:hover { background: var(--bg-card-hover); }
 
-/* ─── Fluent Button ──────────────────────────────────────────────────────── */
+/* ─── Button ─────────────────────────────────────────────────────────────── */
+
 .fluent-btn {
   display: inline-flex;
   align-items: center;
@@ -183,47 +148,32 @@ html, body, #root {
   gap: 6px;
   padding: 5px 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--fluent-border-default);
-  background: var(--fluent-bg-card);
-  color: var(--fluent-text-primary);
+  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+  color: var(--text-primary);
   font-size: 14px;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
+  transition: background 0.15s ease, border-color 0.15s ease;
   min-height: 32px;
   position: relative;
   overflow: hidden;
 }
 
-.fluent-btn:hover {
-  background: var(--fluent-bg-card-hover);
-}
-
-.fluent-btn:active {
-  background: var(--fluent-bg-subtle);
-  border-color: var(--fluent-border-divider);
-}
+.fluent-btn:hover { background: var(--bg-card-hover); }
+.fluent-btn:active { background: var(--bg-card-active); border-color: var(--border-divider); }
 
 .fluent-btn.accent {
-  background: var(--color-accent);
+  background: var(--accent-default);
   border-color: transparent;
-  color: var(--fluent-text-on-accent);
+  color: var(--text-on-accent);
 }
+.fluent-btn.accent:hover { background: var(--accent-light-1); }
+.fluent-btn.accent:active { background: var(--accent-dark-1); }
+.fluent-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.fluent-btn.accent:hover {
-  background: var(--color-accent-hover);
-}
+/* ─── Nav Item ───────────────────────────────────────────────────────────── */
 
-.fluent-btn.accent:active {
-  background: var(--color-accent-active);
-}
-
-.fluent-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* ─── Fluent Nav Item ────────────────────────────────────────────────────── */
 .nav-item {
   display: flex;
   align-items: center;
@@ -231,23 +181,21 @@ html, body, #root {
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  color: var(--fluent-text-primary);
+  color: var(--text-primary);
   font-size: 14px;
   transition: background 0.1s;
   position: relative;
   white-space: nowrap;
   overflow: hidden;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  width: 100%;
 }
 
-.nav-item:hover {
-  background: var(--fluent-bg-subtle-hover);
-}
-
-.nav-item.active {
-  background: var(--fluent-bg-subtle);
-  font-weight: 600;
-}
-
+.nav-item:hover { background: var(--bg-subtle-hover); }
+.nav-item.active { background: var(--bg-subtle); font-weight: 600; }
 .nav-item.active::before {
   content: "";
   position: absolute;
@@ -255,38 +203,32 @@ html, body, #root {
   top: 25%;
   height: 50%;
   width: 3px;
-  background: var(--color-accent);
+  background: var(--accent-default);
   border-radius: 0 2px 2px 0;
 }
 
-/* ─── Status Indicator ───────────────────────────────────────────────────── */
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.status-dot.stopped { background: #9E9E9E; }
-.status-dot.running { background: #0F7B0F; }
-.status-dot.proxy   { background: #0078D4; }
+/* ─── Status Dot ─────────────────────────────────────────────────────────── */
+
+.status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.status-dot.stopped { background: var(--text-tertiary); }
+.status-dot.running { background: var(--status-success); }
+.status-dot.proxy   { background: var(--accent-default); }
 
 /* ─── Delay Badge ────────────────────────────────────────────────────────── */
+
 .delay-badge {
   font-size: 12px;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   font-variant-numeric: tabular-nums;
 }
-.delay-badge.fast    { background: rgba(15, 123, 15, 0.12); color: #0F7B0F; }
-.delay-badge.medium  { background: rgba(157, 93, 0, 0.12);  color: #9D5D00; }
-.delay-badge.slow    { background: rgba(196, 43, 28, 0.12); color: #C42B1C; }
-.delay-badge.timeout { background: var(--fluent-bg-subtle);  color: var(--fluent-text-tertiary); }
-
-:root.dark .delay-badge.fast    { background: rgba(108, 203, 95, 0.15);  color: #6CCB5F; }
-:root.dark .delay-badge.medium  { background: rgba(252, 225, 0, 0.15);   color: #FCE100; }
-:root.dark .delay-badge.slow    { background: rgba(255, 153, 164, 0.15); color: #FF99A4; }
+.delay-badge.fast    { background: var(--status-success-bg); color: var(--status-success); }
+.delay-badge.medium  { background: var(--status-warning-bg); color: var(--status-warning); }
+.delay-badge.slow    { background: var(--status-danger-bg);  color: var(--status-danger); }
+.delay-badge.timeout { background: var(--bg-subtle);         color: var(--text-tertiary); }
 
 /* ─── InfoBar ────────────────────────────────────────────────────────────── */
+
 .infobar {
   display: flex;
   align-items: center;
@@ -296,31 +238,28 @@ html, body, #root {
   font-size: 13px;
   border: 1px solid;
 }
-.infobar.info    { background: rgba(0, 120, 212, 0.06); border-color: rgba(0, 120, 212, 0.2); color: var(--fluent-text-primary); }
-.infobar.success { background: rgba(15, 123, 15, 0.06); border-color: rgba(15, 123, 15, 0.2); }
-.infobar.warning { background: rgba(157, 93, 0, 0.06);  border-color: rgba(157, 93, 0, 0.2); }
-.infobar.error   { background: rgba(196, 43, 28, 0.06); border-color: rgba(196, 43, 28, 0.2); }
+.infobar.error { background: var(--status-danger-bg); border-color: var(--status-danger); }
 
 /* ─── Progress Ring ──────────────────────────────────────────────────────── */
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .progress-ring {
   width: 20px;
   height: 20px;
-  border: 2px solid var(--fluent-border-default);
-  border-top-color: var(--color-accent);
+  border: 2px solid var(--border-default);
+  border-top-color: var(--accent-default);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
 /* ─── Node Card ──────────────────────────────────────────────────────────── */
+
 .node-card {
   padding: 10px 14px;
   border-radius: var(--radius-md);
-  background: var(--fluent-bg-card);
-  border: 1px solid var(--fluent-border-card);
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
   cursor: pointer;
   transition: background 0.1s, border-color 0.15s;
   display: flex;
@@ -329,25 +268,55 @@ html, body, #root {
   gap: 8px;
 }
 
-.node-card:hover {
-  background: var(--fluent-bg-card-hover);
+.node-card:hover { background: var(--bg-card-hover); }
+.node-card.selected { border-color: var(--accent-default); background: var(--bg-selected); }
+
+/* ─── Accent Swatch ──────────────────────────────────────────────────────── */
+
+.accent-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+  flex-shrink: 0;
+}
+.accent-swatch:hover { transform: scale(1.12); }
+.accent-swatch.active { border-color: var(--text-primary); box-shadow: 0 0 0 2px var(--bg-surface); }
+
+/* ─── Utility Classes ────────────────────────────────────────────────────── */
+
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
 }
 
-.node-card.selected {
-  border-color: var(--color-accent);
-  background: rgba(0, 120, 212, 0.06);
-}
-
-:root.dark .node-card.selected {
-  background: rgba(96, 205, 255, 0.08);
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 /* ─── Animations ─────────────────────────────────────────────────────────── */
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.animate-in {
-  animation: fadeIn 0.2s ease-out;
+.animate-in { animation: fadeIn 0.2s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in { animation: none; }
+  .progress-ring { animation-duration: 2s; }
 }

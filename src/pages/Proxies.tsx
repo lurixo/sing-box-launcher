@@ -54,7 +54,7 @@ export function Proxies() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: "var(--fluent-text-tertiary)",
+          color: "var(--text-tertiary)",
           fontSize: 14,
         }}
       >
@@ -73,7 +73,7 @@ export function Proxies() {
           flexDirection: "column",
           alignItems: "center",
           gap: 12,
-          color: "var(--fluent-text-tertiary)",
+          color: "var(--text-tertiary)",
           fontSize: 14,
         }}
       >
@@ -90,7 +90,7 @@ export function Proxies() {
         style={{
           width: 180,
           flexShrink: 0,
-          borderRight: "1px solid var(--fluent-border-divider)",
+          borderRight: "1px solid var(--border-divider)",
           display: "flex",
           flexDirection: "column",
           padding: "12px 6px",
@@ -104,7 +104,7 @@ export function Proxies() {
             fontWeight: 600,
             textTransform: "uppercase",
             letterSpacing: "0.06em",
-            color: "var(--fluent-text-secondary)",
+            color: "var(--text-secondary)",
             padding: "4px 10px 8px",
           }}
         >
@@ -133,7 +133,7 @@ export function Proxies() {
             alignItems: "center",
             gap: 8,
             padding: "12px 16px",
-            borderBottom: "1px solid var(--fluent-border-divider)",
+            borderBottom: "1px solid var(--border-divider)",
             flexShrink: 0,
           }}
         >
@@ -143,13 +143,13 @@ export function Proxies() {
               alignItems: "center",
               gap: 6,
               flex: 1,
-              background: "var(--fluent-bg-card)",
-              border: "1px solid var(--fluent-border-default)",
+              background: "var(--bg-card)",
+              border: "1px solid var(--border-default)",
               borderRadius: "var(--radius-sm)",
               padding: "4px 10px",
             }}
           >
-            <SearchRegular style={{ fontSize: 16, color: "var(--fluent-text-tertiary)" }} />
+            <SearchRegular style={{ fontSize: 16, color: "var(--text-tertiary)" }} />
             <input
               type="text"
               placeholder="Search nodes…"
@@ -159,7 +159,7 @@ export function Proxies() {
                 border: "none",
                 background: "transparent",
                 outline: "none",
-                color: "var(--fluent-text-primary)",
+                color: "var(--text-primary)",
                 fontSize: 13,
                 flex: 1,
                 fontFamily: "inherit",
@@ -187,11 +187,11 @@ export function Proxies() {
             style={{
               padding: "8px 16px",
               fontSize: 12,
-              color: "var(--fluent-text-secondary)",
+              color: "var(--text-secondary)",
               flexShrink: 0,
             }}
           >
-            <strong style={{ color: "var(--fluent-text-primary)" }}>
+            <strong style={{ color: "var(--text-primary)" }}>
               {currentGroup.name}
             </strong>
             {" · "}
@@ -199,7 +199,7 @@ export function Proxies() {
             {currentGroup.now && (
               <>
                 {" · Selected: "}
-                <span style={{ color: "var(--color-accent)" }}>{currentGroup.now}</span>
+                <span style={{ color: "var(--accent-default)" }}>{currentGroup.now}</span>
               </>
             )}
           </div>
@@ -250,7 +250,7 @@ export function Proxies() {
                   >
                     {isSelected && (
                       <CheckmarkCircleFilled
-                        style={{ fontSize: 16, color: "var(--color-accent)", flexShrink: 0 }}
+                        style={{ fontSize: 16, color: "var(--accent-default)", flexShrink: 0 }}
                       />
                     )}
                     <span

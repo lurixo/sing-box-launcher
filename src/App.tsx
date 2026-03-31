@@ -42,12 +42,10 @@ export function App() {
         display: "flex",
         flexDirection: "column",
         height: "100vh",
-        background: "var(--fluent-bg-mica)",
-        backdropFilter: "blur(80px)",
-        WebkitBackdropFilter: "blur(80px)",
+        background: "var(--bg-base)",
         borderRadius: 8,
         overflow: "hidden",
-        border: "1px solid var(--fluent-border-subtle)",
+        border: "1px solid var(--border-subtle)",
       }}
     >
       <TitleBar />

@@ -65,7 +65,7 @@ export function Dashboard() {
               alignItems: "center",
               gap: 8,
               marginBottom: 8,
-              color: "var(--fluent-text-secondary)",
+              color: "var(--text-secondary)",
               fontSize: 12,
               fontWeight: 600,
               textTransform: "uppercase",
@@ -102,7 +102,7 @@ export function Dashboard() {
               alignItems: "center",
               gap: 8,
               marginBottom: 8,
-              color: "var(--fluent-text-secondary)",
+              color: "var(--text-secondary)",
               fontSize: 12,
               fontWeight: 600,
               textTransform: "uppercase",
@@ -124,7 +124,7 @@ export function Dashboard() {
               alignItems: "center",
               gap: 8,
               marginBottom: 8,
-              color: "var(--fluent-text-secondary)",
+              color: "var(--text-secondary)",
               fontSize: 12,
               fontWeight: 600,
               textTransform: "uppercase",
@@ -138,8 +138,8 @@ export function Dashboard() {
             style={{
               fontSize: 13,
               color: status.running
-                ? "var(--fluent-text-primary)"
-                : "var(--fluent-text-tertiary)",
+                ? "var(--text-primary)"
+                : "var(--text-tertiary)",
               fontVariantNumeric: "tabular-nums",
             }}
           >
@@ -156,7 +156,7 @@ export function Dashboard() {
             fontWeight: 600,
             textTransform: "uppercase",
             letterSpacing: "0.04em",
-            color: "var(--fluent-text-secondary)",
+            color: "var(--text-secondary)",
             marginBottom: 14,
           }}
         >
@@ -227,17 +227,17 @@ export function Dashboard() {
           display: "flex",
           gap: 24,
           fontSize: 12,
-          color: "var(--fluent-text-secondary)",
+          color: "var(--text-secondary)",
           padding: "4px 0",
-          borderTop: "1px solid var(--fluent-border-divider)",
+          borderTop: "1px solid var(--border-divider)",
           paddingTop: 12,
         }}
       >
         <span>
-          Proxy: <code style={{ color: "var(--fluent-text-primary)" }}>{status.proxy_server || "—"}</code>
+          Proxy: <code style={{ color: "var(--text-primary)" }}>{status.proxy_server || "—"}</code>
         </span>
         <span>
-          API: <code style={{ color: "var(--fluent-text-primary)" }}>{status.api_address || "—"}</code>
+          API: <code style={{ color: "var(--text-primary)" }}>{status.api_address || "—"}</code>
         </span>
       </div>
     </div>
