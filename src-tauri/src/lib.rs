@@ -8,12 +8,43 @@ mod proxy;
 mod tray;
 
 use std::collections::HashMap;
+use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 use tracing::info;
 
 use crate::clash::ClashClient;
 use crate::error::AppError;
+
+// ─── Debug file logger (works even with windows_subsystem = "windows") ──────
+
+type DebugWriter = Option<Arc<Mutex<std::fs::File>>>;
+
+fn open_debug_log() -> DebugWriter {
+    let dir = manager::resolve_base_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("launcher-debug.log");
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok()
+        .map(|f| Arc::new(Mutex::new(f)))
+}
+
+fn dlog(w: &DebugWriter, msg: &str) {
+    if let Some(ref w) = w {
+        if let Ok(mut f) = w.lock() {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let _ = writeln!(f, "[{ts}] {msg}");
+            let _ = f.flush();
+        }
+    }
+}
 
 // ─── IPC Commands ───────────────────────────────────────────────────────────
 
@@ -170,20 +201,30 @@ async fn open_base_dir(mgr: tauri::State<'_, manager::Manager>) -> Result<(), Ap
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Open debug log file FIRST (before anything that could panic)
+    let dl = open_debug_log();
+    dlog(&dl, &format!("=== sing-box-launcher starting (pid {}) ===", std::process::id()));
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "sing_box_launcher_lib=info".parse().unwrap()),
+                .unwrap_or_else(|_| "sing_box_launcher_lib=debug".parse().unwrap()),
         )
         .init();
 
+    dlog(&dl, "tracing subscriber initialized");
+
     let base_dir = manager::resolve_base_dir();
+    dlog(&dl, &format!("base_dir = {}", base_dir.display()));
     info!(base_dir = %base_dir.display(), "starting sing-box launcher");
 
     let mgr = manager::new_manager(base_dir);
     let grp = groups::new_groups();
 
+    dlog(&dl, "building tauri app...");
+
+    let dl_setup = dl.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(
@@ -203,15 +244,30 @@ pub fn run() {
             test_group_delay,
             open_base_dir,
         ])
-        .setup(|app| {
-            // Set up system tray
-            tray::setup_tray(app.handle())?;
+        .setup(move |app| {
+            dlog(&dl_setup, "setup: entering closure");
 
-            // Show window on startup
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
+            // Set up system tray
+            match tray::setup_tray(app.handle()) {
+                Ok(_) => dlog(&dl_setup, "setup: tray OK"),
+                Err(e) => {
+                    dlog(&dl_setup, &format!("setup: tray FAILED: {e}"));
+                    return Err(e);
+                }
             }
 
+            // Show window on startup
+            match app.get_webview_window("main") {
+                Some(w) => {
+                    let _ = w.show();
+                    dlog(&dl_setup, "setup: window shown");
+                }
+                None => {
+                    dlog(&dl_setup, "setup: WARNING main window not found");
+                }
+            }
+
+            dlog(&dl_setup, "setup: complete");
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -222,5 +278,10 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error running tauri application");
+        .unwrap_or_else(|e| {
+            dlog(&dl, &format!("tauri::Builder::run() FAILED: {e}"));
+            panic!("error running tauri application: {e}");
+        });
+
+    dlog(&dl, "run() exiting normally");
 }
