@@ -93,8 +93,8 @@ impl ManagerInner {
             .args(["-D"])
             .arg(&self.base_dir)
             .current_dir(&self.base_dir)
-            .stdout(log_file.into())
-            .stderr(log_file_err.into())
+            .stdout(std::process::Stdio::from(log_file))
+            .stderr(std::process::Stdio::from(log_file_err))
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| AppError::Process(format!("spawn sing-box: {e}")))?;

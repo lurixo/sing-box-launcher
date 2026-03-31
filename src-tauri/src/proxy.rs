@@ -53,7 +53,7 @@ fn notify_proxy_change() {
     };
 
     unsafe {
-        let _ = InternetSetOptionW(None, INTERNET_OPTION_SETTINGS_CHANGED, None);
-        let _ = InternetSetOptionW(None, INTERNET_OPTION_REFRESH, None);
+        let _ = InternetSetOptionW(None, INTERNET_OPTION_SETTINGS_CHANGED, None, 0);
+        let _ = InternetSetOptionW(None, INTERNET_OPTION_REFRESH, None, 0);
     }
 }

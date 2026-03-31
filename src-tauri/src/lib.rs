@@ -1,3 +1,4 @@
+use tauri::Emitter;
 mod clash;
 mod config;
 mod error;
