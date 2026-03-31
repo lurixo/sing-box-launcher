@@ -34,7 +34,7 @@ fn open_debug_log() -> DebugWriter {
 }
 
 fn dlog(w: &DebugWriter, msg: &str) {
-    if let Some(ref w) = w {
+    if let Some(w) = w {
         if let Ok(mut f) = w.lock() {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
