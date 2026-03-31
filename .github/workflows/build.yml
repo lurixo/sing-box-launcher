@@ -12,13 +12,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Node.js 24.x
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24.x"
 
@@ -32,7 +32,7 @@ jobs:
 
       - name: Upload MSI artifact
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sing-box-launcher-msi
           path: src-tauri/target/release/bundle/msi/*.msi
@@ -40,7 +40,7 @@ jobs:
 
       - name: Upload NSIS artifact
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sing-box-launcher-exe
           path: src-tauri/target/release/bundle/nsis/*.exe
@@ -48,7 +48,7 @@ jobs:
 
       - name: Upload build logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rust-build-logs
           path: src-tauri/target/release/.cargo-lock
