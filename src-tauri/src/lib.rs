@@ -6,6 +6,7 @@ mod error;
 mod groups;
 mod manager;
 mod proxy;
+mod settings;
 mod tray;
 
 use std::collections::HashMap;
@@ -89,7 +90,6 @@ async fn stop_core(
 ) -> Result<(), AppError> {
     let mut mgr = mgr.lock().await;
 
-    // Disable system proxy if enabled
     if mgr.proxy_enabled {
         mgr.proxy_enabled = false;
         let _ = proxy::set_system_proxy(false, "", "");
@@ -109,7 +109,6 @@ async fn restart_core(
     grp: tauri::State<'_, groups::Groups>,
     app: tauri::AppHandle,
 ) -> Result<config::ConfigInfo, AppError> {
-    // Stop
     {
         let mut mgr = mgr.lock().await;
         if mgr.proxy_enabled {
@@ -122,7 +121,6 @@ async fn restart_core(
         grp.lock().await.clear();
     }
 
-    // Start
     start_core(mgr, grp, app).await
 }
 
@@ -202,11 +200,9 @@ async fn open_base_dir(mgr: tauri::State<'_, manager::Manager>) -> Result<(), Ap
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Open debug log file FIRST (before anything that could panic)
     let dl = open_debug_log();
     dlog(&dl, &format!("=== sing-box-launcher starting (pid {}) ===", std::process::id()));
 
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -219,6 +215,11 @@ pub fn run() {
     let base_dir = manager::resolve_base_dir();
     dlog(&dl, &format!("base_dir = {}", base_dir.display()));
     info!(base_dir = %base_dir.display(), "starting sing-box launcher");
+
+    // Check if silent start is enabled
+    let app_settings = settings::load_settings(&base_dir);
+    let silent = app_settings.silent_start;
+    dlog(&dl, &format!("silent_start = {silent}"));
 
     let mgr = manager::new_manager(base_dir);
     let grp = groups::new_groups();
@@ -245,11 +246,15 @@ pub fn run() {
             test_group_delay,
             open_base_dir,
             accent::get_system_accent,
+            config::get_config,
+            config::save_config,
+            settings::get_settings,
+            settings::set_silent_start,
+            proxy::enable_uwp_loopback,
         ])
         .setup(move |app| {
             dlog(&dl_setup, "setup: entering closure");
 
-            // Set up system tray
             match tray::setup_tray(app.handle()) {
                 Ok(_) => dlog(&dl_setup, "setup: tray OK"),
                 Err(e) => {
@@ -258,14 +263,18 @@ pub fn run() {
                 }
             }
 
-            // Show window on startup
-            match app.get_webview_window("main") {
-                Some(w) => {
-                    let _ = w.show();
-                    dlog(&dl_setup, "setup: window shown");
-                }
-                None => {
-                    dlog(&dl_setup, "setup: WARNING main window not found");
+            // Show window only if NOT silent start
+            if silent {
+                dlog(&dl_setup, "setup: silent start — window hidden");
+            } else {
+                match app.get_webview_window("main") {
+                    Some(w) => {
+                        let _ = w.show();
+                        dlog(&dl_setup, "setup: window shown");
+                    }
+                    None => {
+                        dlog(&dl_setup, "setup: WARNING main window not found");
+                    }
                 }
             }
 
@@ -273,7 +282,6 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Minimize to tray on close
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.hide();
                 api.prevent_close();

@@ -57,3 +57,43 @@ fn notify_proxy_change() {
         let _ = InternetSetOptionW(None, INTERNET_OPTION_REFRESH, None, 0);
     }
 }
+
+// ─── UWP Loopback ───────────────────────────────────────────────────────────
+
+/// Enable UWP loopback exemption for all AppContainer apps.
+/// Runs: CheckNetIsolation.exe LoopbackExempt -a -p=<SID> for each package.
+/// Uses a PowerShell one-liner to enumerate all packages and exempt them.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn enable_uwp_loopback() -> Result<String, AppError> {
+    let output = tokio::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            r#"Get-AppxPackage | ForEach-Object { 
+                $sid = (Get-AppxPackage $_.PackageFamilyName | Get-AppxPackageManifest).Package.Applications.Application | Out-Null
+                CheckNetIsolation.exe LoopbackExempt -a -n="$($_.PackageFamilyName)" 2>$null
+            }; 
+            $count = (CheckNetIsolation.exe LoopbackExempt -s 2>$null | Measure-Object -Line).Lines;
+            Write-Output "Exempted $count apps""#,
+        ])
+        .output()
+        .await
+        .map_err(|e| AppError::Proxy(format!("run PowerShell: {e}")))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if !output.status.success() && !stderr.is_empty() {
+        return Err(AppError::Proxy(format!("UWP loopback failed: {stderr}")));
+    }
+
+    info!(result = %stdout, "UWP loopback exemption applied");
+    Ok(stdout)
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub async fn enable_uwp_loopback() -> Result<String, AppError> {
+    Err(AppError::Proxy("UWP loopback is only available on Windows".into()))
+}

@@ -19,6 +19,10 @@ export interface ProxyGroup {
   all: string[];
 }
 
+export interface AppSettings {
+  silent_start: boolean;
+}
+
 export type DelayMap = Record<string, number>;
 
 export type Page = "dashboard" | "proxies" | "settings";

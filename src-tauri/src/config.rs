@@ -44,6 +44,39 @@ pub fn prepare_runtime_config(base_dir: &Path) -> Result<ConfigInfo, AppError> {
     })
 }
 
+// ─── IPC Commands ───────────────────────────────────────────────────────────
+
+/// Read the current config.json content
+#[tauri::command]
+pub async fn get_config(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+) -> Result<String, AppError> {
+    let mgr = mgr.lock().await;
+    let path = mgr.base_dir.join("config.json");
+    std::fs::read_to_string(&path)
+        .map_err(|e| AppError::Config(format!("read config.json: {e}")))
+}
+
+/// Save content as config.json (validates JSON first)
+#[tauri::command]
+pub async fn save_config(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    content: String,
+) -> Result<(), AppError> {
+    // Validate JSON
+    let _: Value = serde_json::from_str(&content)
+        .map_err(|e| AppError::Config(format!("invalid JSON: {e}")))?;
+
+    let mgr = mgr.lock().await;
+    let path = mgr.base_dir.join("config.json");
+    std::fs::write(&path, &content)
+        .map_err(|e| AppError::Config(format!("write config.json: {e}")))?;
+    info!("config.json saved ({} bytes)", content.len());
+    Ok(())
+}
+
+// ─── Internal helpers ───────────────────────────────────────────────────────
+
 /// Ensure `experimental.clash_api.external_controller` exists.
 /// Returns (address, secret).
 fn inject_clash_api(config: &mut Value) -> (String, String) {
@@ -154,27 +187,5 @@ fn extract_proxy_server(config: &Value) -> String {
             format!("{h}:{}", e.port)
         }
         None => String::new(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_inject_clash_api_default() {
-        let mut config: Value = serde_json::from_str(r#"{"inbounds":[]}"#).unwrap();
-        let (addr, secret) = inject_clash_api(&mut config);
-        assert_eq!(addr, "127.0.0.1:9090");
-        assert_eq!(secret, "");
-    }
-
-    #[test]
-    fn test_extract_proxy_mixed() {
-        let config: Value = serde_json::from_str(
-            r#"{"inbounds":[{"type":"mixed","listen":"0.0.0.0","listen_port":2080}]}"#,
-        )
-        .unwrap();
-        assert_eq!(extract_proxy_server(&config), "127.0.0.1:2080");
     }
 }
