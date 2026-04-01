@@ -5,17 +5,24 @@ use tracing::info;
 
 use crate::error::AppError;
 
+fn default_active_config() -> String {
+    "default".into()
+}
+
 /// Persistent application settings stored in settings.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default)]
     pub silent_start: bool,
+    #[serde(default = "default_active_config")]
+    pub active_config: String,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             silent_start: false,
+            active_config: "default".into(),
         }
     }
 }
@@ -62,5 +69,16 @@ pub async fn set_silent_start(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.silent_start = enabled;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_active_config(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    name: String,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.active_config = name;
     save_settings(&mgr.base_dir, &settings)
 }

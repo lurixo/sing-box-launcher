@@ -21,6 +21,12 @@ export interface ProxyGroup {
 
 export interface AppSettings {
   silent_start: boolean;
+  active_config: string;
+}
+
+export interface ConfigEntry {
+  name: string;
+  active: boolean;
 }
 
 export type DelayMap = Record<string, number>;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   PlayRegular,
   StopRegular,
@@ -13,10 +13,14 @@ import {
   SaveRegular,
   ChevronDownRegular,
   ChevronUpRegular,
+  AddRegular,
+  DeleteRegular,
+  CheckmarkCircleRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
 import { useReveal } from "../hooks/useReveal";
+import type { ConfigEntry } from "../types";
 
 function formatUptime(secs: number): string {
   if (secs === 0) return "—";
@@ -43,40 +47,109 @@ export function Dashboard() {
     return () => clearInterval(interval);
   }, [status.running, status.uptime_secs]);
 
-  // Config editor state
+  // ─── Multi-config state ──────────────────────────────────────────────────
   const [configExpanded, setConfigExpanded] = useState(false);
+  const [configs, setConfigs] = useState<ConfigEntry[]>([]);
+  const [selectedName, setSelectedName] = useState<string | null>(null);
   const [configText, setConfigText] = useState("");
   const [configDirty, setConfigDirty] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const [configMsg, setConfigMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
 
-  const loadConfig = async () => {
+  const loadConfigList = useCallback(async () => {
     try {
-      const content = await invoke<string>("get_config");
+      const list = await invoke<ConfigEntry[]>("list_configs");
+      setConfigs(list);
+      // Auto-select: keep current selection, or pick active, or first
+      setSelectedName((prev) => {
+        if (prev && list.find((c) => c.name === prev)) return prev;
+        const active = list.find((c) => c.active);
+        return active?.name ?? list[0]?.name ?? null;
+      });
+    } catch (e) {
+      setConfigMsg({ type: "err", text: String(e) });
+    }
+  }, []);
+
+  const loadConfigContent = useCallback(async (name: string) => {
+    try {
+      const content = await invoke<string>("get_config", { name });
       setConfigText(content);
       setConfigDirty(false);
       setConfigMsg(null);
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
-  };
+  }, []);
 
+  // Load list when expanded
   useEffect(() => {
-    if (configExpanded && !configText) {
-      loadConfig();
+    if (configExpanded) {
+      loadConfigList();
     }
-  }, [configExpanded]);
+  }, [configExpanded, loadConfigList]);
+
+  // Load content when selection changes
+  useEffect(() => {
+    if (configExpanded && selectedName) {
+      loadConfigContent(selectedName);
+    }
+  }, [configExpanded, selectedName, loadConfigContent]);
 
   const handleSaveConfig = async () => {
+    if (!selectedName) return;
     setConfigSaving(true);
     try {
-      await invoke("save_config", { content: configText });
+      await invoke("save_config", { name: selectedName, content: configText });
       setConfigDirty(false);
-      setConfigMsg({ type: "ok", text: "Config saved. Restart core to apply." });
+      setConfigMsg({ type: "ok", text: "Saved. Restart core to apply changes." });
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
     setConfigSaving(false);
+  };
+
+  const handleSetActive = async () => {
+    if (!selectedName) return;
+    try {
+      await invoke("set_active_config", { name: selectedName });
+      await loadConfigList();
+      setConfigMsg({ type: "ok", text: `'${selectedName}' is now the active config.` });
+    } catch (e) {
+      setConfigMsg({ type: "err", text: String(e) });
+    }
+  };
+
+  const handleCreate = async () => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    try {
+      await invoke("create_config", { name: trimmed });
+      setCreating(false);
+      setNewName("");
+      await loadConfigList();
+      setSelectedName(trimmed);
+    } catch (e) {
+      setConfigMsg({ type: "err", text: String(e) });
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedName) return;
+    const active = configs.find((c) => c.active);
+    if (active?.name === selectedName) {
+      setConfigMsg({ type: "err", text: "Cannot delete the active config." });
+      return;
+    }
+    try {
+      await invoke("delete_config", { name: selectedName });
+      setSelectedName(null);
+      await loadConfigList();
+    } catch (e) {
+      setConfigMsg({ type: "err", text: String(e) });
+    }
   };
 
   const handleImportFile = () => {
@@ -88,16 +161,26 @@ export function Dashboard() {
       if (!file) return;
       const text = await file.text();
       try {
-        JSON.parse(text); // validate
-        setConfigText(text);
-        setConfigDirty(true);
-        setConfigMsg(null);
+        JSON.parse(text); // validate JSON
       } catch {
         setConfigMsg({ type: "err", text: "Invalid JSON file" });
+        return;
+      }
+      // Use filename without extension as config name
+      const baseName = file.name.replace(/\.json$/i, "").replace(/[^a-zA-Z0-9_-]/g, "_") || "imported";
+      try {
+        await invoke("save_config", { name: baseName, content: text });
+        await loadConfigList();
+        setSelectedName(baseName);
+        setConfigMsg({ type: "ok", text: `Imported as '${baseName}'.` });
+      } catch (e) {
+        setConfigMsg({ type: "err", text: String(e) });
       }
     };
     input.click();
   };
+
+  const isActive = configs.find((c) => c.name === selectedName)?.active ?? false;
 
   return (
     <div
@@ -235,67 +318,147 @@ export function Dashboard() {
 
         {configExpanded && (
           <div style={{ padding: "0 20px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
-            {/* Toolbar */}
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button className="fluent-btn reveal-target" onClick={handleImportFile} style={{ fontSize: 13 }}>
-                <ArrowImportRegular style={{ fontSize: 16 }} />
-                Import File
-              </button>
-              <button className="fluent-btn reveal-target" onClick={loadConfig} style={{ fontSize: 13 }}>
-                Reload
-              </button>
+
+            {/* Config Tabs */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {configs.map((c) => (
+                <button
+                  key={c.name}
+                  className={`fluent-btn reveal-target ${selectedName === c.name ? "accent" : ""}`}
+                  onClick={() => { setSelectedName(c.name); setConfigMsg(null); }}
+                  style={{ fontSize: 12, minHeight: 28, padding: "4px 12px", position: "relative" }}
+                >
+                  {c.active && <CheckmarkCircleRegular style={{ fontSize: 13 }} />}
+                  {c.name}
+                </button>
+              ))}
+
+              {/* Create new */}
+              {creating ? (
+                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  <input
+                    autoFocus
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
+                    placeholder="name"
+                    style={{
+                      border: "1px solid var(--border-default)",
+                      borderRadius: "var(--radius-sm)",
+                      padding: "3px 8px",
+                      fontSize: 12,
+                      background: "var(--bg-surface)",
+                      color: "var(--text-primary)",
+                      outline: "none",
+                      width: 100,
+                      height: 28,
+                      fontFamily: "inherit",
+                    }}
+                  />
+                  <button className="fluent-btn accent reveal-target" onClick={handleCreate} style={{ fontSize: 12, minHeight: 28, padding: "4px 8px" }}>OK</button>
+                  <button className="fluent-btn reveal-target" onClick={() => setCreating(false)} style={{ fontSize: 12, minHeight: 28, padding: "4px 8px" }}>✕</button>
+                </div>
+              ) : (
+                <button
+                  className="fluent-btn reveal-target"
+                  onClick={() => { setCreating(true); setNewName(""); }}
+                  style={{ fontSize: 12, minHeight: 28, padding: "4px 8px" }}
+                  title="New config"
+                >
+                  <AddRegular style={{ fontSize: 14 }} />
+                </button>
+              )}
+
               <button
-                className="fluent-btn accent reveal-target"
-                onClick={handleSaveConfig}
-                disabled={!configDirty || configSaving}
-                style={{ fontSize: 13, marginLeft: "auto" }}
+                className="fluent-btn reveal-target"
+                onClick={handleImportFile}
+                style={{ fontSize: 12, minHeight: 28, padding: "4px 10px" }}
               >
-                {configSaving ? <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <SaveRegular style={{ fontSize: 16 }} />}
-                Save
+                <ArrowImportRegular style={{ fontSize: 14 }} />
+                Import
               </button>
             </div>
 
-            {/* Message */}
-            {configMsg && (
-              <div
-                className={`infobar ${configMsg.type === "err" ? "error" : ""}`}
-                style={configMsg.type === "ok" ? { background: "var(--status-success-bg)", borderColor: "var(--status-success)" } : undefined}
-              >
-                {configMsg.text}
+            {/* Empty state */}
+            {configs.length === 0 && (
+              <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-tertiary)", fontSize: 13 }}>
+                No configs yet. Click <strong>+</strong> to create one or <strong>Import</strong> a file.
               </div>
             )}
 
-            {/* Editor */}
-            <textarea
-              value={configText}
-              onChange={(e) => {
-                setConfigText(e.target.value);
-                setConfigDirty(true);
-                setConfigMsg(null);
-              }}
-              spellCheck={false}
-              style={{
-                width: "100%",
-                height: 280,
-                resize: "vertical",
-                fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
-                fontSize: 12,
-                lineHeight: 1.5,
-                padding: 12,
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--border-default)",
-                background: "var(--bg-surface)",
-                color: "var(--text-primary)",
-                outline: "none",
-                tabSize: 2,
-              }}
-              onFocus={(e) => (e.target.style.borderColor = "var(--accent-default)")}
-              onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
-            />
+            {/* Toolbar (when a config is selected) */}
+            {selectedName && (
+              <>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {!isActive && (
+                    <button className="fluent-btn accent reveal-target" onClick={handleSetActive} style={{ fontSize: 13 }}>
+                      <CheckmarkCircleRegular style={{ fontSize: 16 }} />
+                      Set Active
+                    </button>
+                  )}
+                  <button className="fluent-btn reveal-target" onClick={() => selectedName && loadConfigContent(selectedName)} style={{ fontSize: 13 }}>
+                    Reload
+                  </button>
+                  {!isActive && (
+                    <button className="fluent-btn reveal-target" onClick={handleDelete} style={{ fontSize: 13, color: "var(--status-danger)" }}>
+                      <DeleteRegular style={{ fontSize: 16 }} />
+                      Delete
+                    </button>
+                  )}
+                  <button
+                    className="fluent-btn accent reveal-target"
+                    onClick={handleSaveConfig}
+                    disabled={!configDirty || configSaving}
+                    style={{ fontSize: 13, marginLeft: "auto" }}
+                  >
+                    {configSaving ? <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <SaveRegular style={{ fontSize: 16 }} />}
+                    Save
+                  </button>
+                </div>
 
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-              Paste config.json content directly or import from file. Save and restart core to apply changes.
-            </div>
+                {/* Message */}
+                {configMsg && (
+                  <div
+                    className={`infobar ${configMsg.type === "err" ? "error" : ""}`}
+                    style={configMsg.type === "ok" ? { background: "var(--status-success-bg)", borderColor: "var(--status-success)" } : undefined}
+                  >
+                    {configMsg.text}
+                  </div>
+                )}
+
+                {/* Editor */}
+                <textarea
+                  value={configText}
+                  onChange={(e) => {
+                    setConfigText(e.target.value);
+                    setConfigDirty(true);
+                    setConfigMsg(null);
+                  }}
+                  spellCheck={false}
+                  style={{
+                    width: "100%",
+                    height: 280,
+                    resize: "vertical",
+                    fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    padding: 12,
+                    borderRadius: "var(--radius-sm)",
+                    border: "1px solid var(--border-default)",
+                    background: "var(--bg-surface)",
+                    color: "var(--text-primary)",
+                    outline: "none",
+                    tabSize: 2,
+                  }}
+                  onFocus={(e) => (e.target.style.borderColor = "var(--accent-default)")}
+                  onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
+                />
+
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                  {isActive ? "✦ Active config" : "Inactive"} · Paste JSON or import from file. Save and restart core to apply.
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

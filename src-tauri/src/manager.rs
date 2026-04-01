@@ -46,8 +46,8 @@ pub fn new_manager(base_dir: PathBuf) -> Manager {
 }
 
 impl ManagerInner {
-    /// Check that sing-box.exe and config.json exist
-    pub fn validate_files(&self) -> Result<(), AppError> {
+    /// Check that sing-box.exe and the active config exist
+    pub fn validate_files(&self, config_name: &str) -> Result<(), AppError> {
         let sb = self.base_dir.join("sing-box.exe");
         if !sb.exists() {
             return Err(AppError::Config(format!(
@@ -55,11 +55,10 @@ impl ManagerInner {
                 self.base_dir.display()
             )));
         }
-        let cfg = self.base_dir.join("config.json");
+        let cfg = self.base_dir.join("configs").join(format!("{config_name}.json"));
         if !cfg.exists() {
             return Err(AppError::Config(format!(
-                "config.json not found in {}",
-                self.base_dir.display()
+                "Config '{}' not found. Create or import a config first.", config_name
             )));
         }
         Ok(())
@@ -71,10 +70,13 @@ impl ManagerInner {
             return Err(AppError::AlreadyRunning);
         }
 
-        self.validate_files()?;
+        let settings = crate::settings::load_settings(&self.base_dir);
+        let config_name = &settings.active_config;
+
+        self.validate_files(config_name)?;
 
         // Prepare runtime config
-        let info = config::prepare_runtime_config(&self.base_dir)?;
+        let info = config::prepare_runtime_config(&self.base_dir, config_name)?;
 
         let runtime_path = self.base_dir.join("config_runtime.json");
         let sb_path = self.base_dir.join("sing-box.exe");

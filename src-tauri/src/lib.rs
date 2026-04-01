@@ -213,6 +213,7 @@ pub fn run() {
     dlog(&dl, "tracing subscriber initialized");
 
     let base_dir = manager::resolve_base_dir();
+    config::ensure_configs_dir(&base_dir);
     dlog(&dl, &format!("base_dir = {}", base_dir.display()));
     info!(base_dir = %base_dir.display(), "starting sing-box launcher");
 
@@ -246,10 +247,14 @@ pub fn run() {
             test_group_delay,
             open_base_dir,
             accent::get_system_accent,
+            config::list_configs,
             config::get_config,
             config::save_config,
+            config::create_config,
+            config::delete_config,
             settings::get_settings,
             settings::set_silent_start,
+            settings::set_active_config,
             proxy::enable_uwp_loopback,
         ])
         .setup(move |app| {
