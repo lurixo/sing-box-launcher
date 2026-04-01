@@ -33,7 +33,7 @@ This project targets **Windows only**. The system proxy feature uses Windows Reg
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-org/sing-box-launcher.git
+git clone https://github.com/lurixo/sing-box-launcher.git
 cd sing-box-launcher
 
 # Install frontend dependencies
@@ -122,7 +122,7 @@ sing-box-launcher/
 The `build.yml` workflow:
 - Builds on `windows-latest`
 - Installs Rust stable + Node.js 24.x
-- Runs `npm ci` + `npm run tauri build`
+- Runs `npm install` + `npm run tauri build`
 - Uploads `.msi` and `.exe` installers as artifacts (7-day retention)
 
 ### Release (on version tag)
@@ -145,6 +145,10 @@ The `release.yml` workflow will:
 
 ### Backend (Rust)
 - **tauri** 2.10 — Application framework
+- **tauri-build** 2.5 — Build script
+- **thiserror** 2.0 — Error derive macro
+- **anyhow** 1.0 — Application error handling
+- **urlencoding** 2.1 — URL percent-encoding
 - **tokio** ~1.47 LTS — Async runtime
 - **reqwest** 0.13 — HTTP client (Clash API)
 - **serde/serde_json** 1.0 — Serialization
@@ -157,6 +161,7 @@ The `release.yml` workflow will:
 - **Zustand** 5.0 — State management
 - **Tailwind CSS** 4.1 — Utility-first CSS (v4, CSS-first config)
 - **Vite** 8.0 — Build tool (Rolldown)
+- **TypeScript** 6.0 — Type checking
 - **@fluentui/react-icons** — Fluent Design icons
 
 ## License
