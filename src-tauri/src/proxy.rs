@@ -60,40 +60,44 @@ fn notify_proxy_change() {
 
 // ─── UWP Loopback ───────────────────────────────────────────────────────────
 
-/// Enable UWP loopback exemption for all AppContainer apps.
-/// Runs: CheckNetIsolation.exe LoopbackExempt -a -p=<SID> for each package.
-/// Uses a PowerShell one-liner to enumerate all packages and exempt them.
+/// Launch the bundled EnableLoopback.exe tool with admin elevation (UAC).
+/// Opens a GUI that lets the user manage UWP loopback exemptions.
 #[cfg(target_os = "windows")]
 #[tauri::command]
-pub async fn enable_uwp_loopback() -> Result<String, AppError> {
-    let output = tokio::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            r#"Get-AppxPackage | ForEach-Object { 
-                $sid = (Get-AppxPackage $_.PackageFamilyName | Get-AppxPackageManifest).Package.Applications.Application | Out-Null
-                CheckNetIsolation.exe LoopbackExempt -a -n="$($_.PackageFamilyName)" 2>$null
-            }; 
-            $count = (CheckNetIsolation.exe LoopbackExempt -s 2>$null | Measure-Object -Line).Lines;
-            Write-Output "Exempted $count apps""#,
-        ])
-        .output()
-        .await
-        .map_err(|e| AppError::Proxy(format!("run PowerShell: {e}")))?;
+pub async fn enable_uwp_loopback(app: tauri::AppHandle) -> Result<String, AppError> {
+    use std::os::windows::process::CommandExt;
+    use tauri::Manager;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    if !output.status.success() && !stderr.is_empty() {
-        return Err(AppError::Proxy(format!("UWP loopback failed: {stderr}")));
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| AppError::Proxy(format!("resolve resource dir: {e}")))?;
+
+    let tool_path = resource_dir.join("resources").join("EnableLoopback.exe");
+    if !tool_path.exists() {
+        return Err(AppError::Proxy(format!(
+            "EnableLoopback.exe not found at {}",
+            tool_path.display()
+        )));
     }
 
-    info!(result = %stdout, "UWP loopback exemption applied");
-    Ok(stdout)
+    let path_str = tool_path.to_string_lossy().replace("'", "''");
+    let ps_cmd = format!("Start-Process -FilePath '{}' -Verb RunAs", path_str);
+
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| AppError::Proxy(format!("launch loopback tool: {e}")))?;
+
+    info!("EnableLoopback.exe launched for UWP loopback exemption");
+    Ok("Loopback tool launched. Approve the UAC prompt to continue.".into())
 }
 
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
-pub async fn enable_uwp_loopback() -> Result<String, AppError> {
+pub async fn enable_uwp_loopback(_app: tauri::AppHandle) -> Result<String, AppError> {
     Err(AppError::Proxy("UWP loopback is only available on Windows".into()))
 }

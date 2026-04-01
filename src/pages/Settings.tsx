@@ -185,7 +185,7 @@ export function Settings() {
           <div>
             <div style={{ fontSize: 13, fontWeight: 500 }}>UWP loopback</div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-              Enable loopback so UWP apps can use the local proxy
+              Launch loopback tool so UWP apps can use the local proxy
             </div>
           </div>
           <button
@@ -199,7 +199,7 @@ export function Settings() {
             ) : (
               <GlobeRegular style={{ fontSize: 14 }} />
             )}
-            Enable
+            Open Tool
           </button>
         </div>
 

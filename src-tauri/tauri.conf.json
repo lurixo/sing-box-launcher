@@ -45,7 +45,10 @@
       "nsis": {
         "installMode": "currentUser"
       }
-    }
+    },
+    "resources": [
+      "resources/EnableLoopback.exe"
+    ]
   },
   "plugins": {
     "shell": {
