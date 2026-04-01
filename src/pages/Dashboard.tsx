@@ -16,7 +16,6 @@ import {
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-shell";
 import { useReveal } from "../hooks/useReveal";
 
 function formatUptime(secs: number): string {

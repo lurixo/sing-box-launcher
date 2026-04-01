@@ -4,7 +4,6 @@ import {
   WeatherMoonRegular,
   DesktopRegular,
   ColorRegular,
-  ArrowSyncRegular,
   GlobeRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
