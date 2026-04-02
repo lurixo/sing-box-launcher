@@ -160,18 +160,8 @@ pub async fn create_config(
     if path.exists() {
         return Err(AppError::Config(format!("config '{name}' already exists")));
     }
-    let template = serde_json::json!({
-        "log": { "level": "info" },
-        "inbounds": [],
-        "outbounds": [
-            { "type": "direct", "tag": "direct" },
-            { "type": "block",  "tag": "block"  },
-            { "type": "dns",    "tag": "dns-out" }
-        ],
-        "route": { "rules": [] }
-    });
-    let content = serde_json::to_string_pretty(&template)?;
-    std::fs::write(&path, &content)
+    // Create empty config — user fills content via the editor
+    std::fs::write(&path, "")
         .map_err(|e| AppError::Config(format!("create {name}.json: {e}")))?;
     info!(name = %name, "new config created");
     Ok(())
@@ -195,6 +185,36 @@ pub async fn delete_config(
     std::fs::remove_file(&path)
         .map_err(|e| AppError::Config(format!("delete {name}.json: {e}")))?;
     info!(name = %name, "config deleted");
+    Ok(())
+}
+
+/// Rename a config file.  Updates active_config in settings if necessary.
+#[tauri::command]
+pub async fn rename_config(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    old_name: String,
+    new_name: String,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let old_path = config_path(&mgr.base_dir, &old_name)?;
+    let new_path = config_path(&mgr.base_dir, &new_name)?;
+    if !old_path.exists() {
+        return Err(AppError::Config(format!("config '{old_name}' not found")));
+    }
+    if new_path.exists() {
+        return Err(AppError::Config(format!("config '{new_name}' already exists")));
+    }
+    std::fs::rename(&old_path, &new_path)
+        .map_err(|e| AppError::Config(format!("rename config: {e}")))?;
+
+    // If renaming the active config, update settings
+    let mut settings = crate::settings::load_settings(&mgr.base_dir);
+    if settings.active_config == old_name {
+        settings.active_config = new_name.clone();
+        let _ = crate::settings::save_settings(&mgr.base_dir, &settings);
+    }
+
+    info!(old = %old_name, new = %new_name, "config renamed");
     Ok(())
 }
 

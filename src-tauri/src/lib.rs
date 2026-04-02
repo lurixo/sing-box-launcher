@@ -252,6 +252,7 @@ pub fn run() {
             config::save_config,
             config::create_config,
             config::delete_config,
+            config::rename_config,
             settings::get_settings,
             settings::set_silent_start,
             settings::set_active_config,

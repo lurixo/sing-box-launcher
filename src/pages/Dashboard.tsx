@@ -16,6 +16,8 @@ import {
   AddRegular,
   DeleteRegular,
   CheckmarkCircleRegular,
+  EditRegular,
+  ArrowLeftRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
@@ -47,38 +49,38 @@ export function Dashboard() {
     return () => clearInterval(interval);
   }, [status.running, status.uptime_secs]);
 
-  // ─── Multi-config state ──────────────────────────────────────────────────
+  // ─── Config state ─────────────────────────────────────────────────────────
   const [configExpanded, setConfigExpanded] = useState(false);
   const [configs, setConfigs] = useState<ConfigEntry[]>([]);
-  const [selectedName, setSelectedName] = useState<string | null>(null);
+  // null = list view, string = detail/editor view
+  const [editingName, setEditingName] = useState<string | null>(null);
   const [configText, setConfigText] = useState("");
   const [configDirty, setConfigDirty] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const [configMsg, setConfigMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  // Creating
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  // Renaming
+  const [renamingName, setRenamingName] = useState<string | null>(null);
+  const [renameInput, setRenameInput] = useState("");
 
   const loadConfigList = useCallback(async () => {
     try {
       const list = await invoke<ConfigEntry[]>("list_configs");
       setConfigs(list);
-      // Auto-select: keep current selection, or pick active, or first
-      setSelectedName((prev) => {
-        if (prev && list.find((c) => c.name === prev)) return prev;
-        const active = list.find((c) => c.active);
-        return active?.name ?? list[0]?.name ?? null;
-      });
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
   }, []);
 
-  const loadConfigContent = useCallback(async (name: string) => {
+  const openEditor = useCallback(async (name: string) => {
     try {
       const content = await invoke<string>("get_config", { name });
       setConfigText(content);
       setConfigDirty(false);
       setConfigMsg(null);
+      setEditingName(name);
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
@@ -91,18 +93,11 @@ export function Dashboard() {
     }
   }, [configExpanded, loadConfigList]);
 
-  // Load content when selection changes
-  useEffect(() => {
-    if (configExpanded && selectedName) {
-      loadConfigContent(selectedName);
-    }
-  }, [configExpanded, selectedName, loadConfigContent]);
-
   const handleSaveConfig = async () => {
-    if (!selectedName) return;
+    if (!editingName) return;
     setConfigSaving(true);
     try {
-      await invoke("save_config", { name: selectedName, content: configText });
+      await invoke("save_config", { name: editingName, content: configText });
       setConfigDirty(false);
       setConfigMsg({ type: "ok", text: "Saved. Restart core to apply changes." });
     } catch (e) {
@@ -111,12 +106,11 @@ export function Dashboard() {
     setConfigSaving(false);
   };
 
-  const handleSetActive = async () => {
-    if (!selectedName) return;
+  const handleSetActive = async (name: string) => {
     try {
-      await invoke("set_active_config", { name: selectedName });
+      await invoke("set_active_config", { name });
       await loadConfigList();
-      setConfigMsg({ type: "ok", text: `'${selectedName}' is now the active config.` });
+      setConfigMsg({ type: "ok", text: `'${name}' is now the active config.` });
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
@@ -130,22 +124,37 @@ export function Dashboard() {
       setCreating(false);
       setNewName("");
       await loadConfigList();
-      setSelectedName(trimmed);
+      openEditor(trimmed);
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
   };
 
-  const handleDelete = async () => {
-    if (!selectedName) return;
+  const handleDelete = async (name: string) => {
     const active = configs.find((c) => c.active);
-    if (active?.name === selectedName) {
+    if (active?.name === name) {
       setConfigMsg({ type: "err", text: "Cannot delete the active config." });
       return;
     }
     try {
-      await invoke("delete_config", { name: selectedName });
-      setSelectedName(null);
+      await invoke("delete_config", { name });
+      if (editingName === name) setEditingName(null);
+      await loadConfigList();
+    } catch (e) {
+      setConfigMsg({ type: "err", text: String(e) });
+    }
+  };
+
+  const handleRename = async (oldName: string) => {
+    const trimmed = renameInput.trim();
+    if (!trimmed || trimmed === oldName) {
+      setRenamingName(null);
+      return;
+    }
+    try {
+      await invoke("rename_config", { oldName, newName: trimmed });
+      if (editingName === oldName) setEditingName(trimmed);
+      setRenamingName(null);
       await loadConfigList();
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
@@ -161,17 +170,16 @@ export function Dashboard() {
       if (!file) return;
       const text = await file.text();
       try {
-        JSON.parse(text); // validate JSON
+        JSON.parse(text);
       } catch {
         setConfigMsg({ type: "err", text: "Invalid JSON file" });
         return;
       }
-      // Use filename without extension as config name
       const baseName = file.name.replace(/\.json$/i, "").replace(/[^a-zA-Z0-9_-]/g, "_") || "imported";
       try {
         await invoke("save_config", { name: baseName, content: text });
         await loadConfigList();
-        setSelectedName(baseName);
+        openEditor(baseName);
         setConfigMsg({ type: "ok", text: `Imported as '${baseName}'.` });
       } catch (e) {
         setConfigMsg({ type: "err", text: String(e) });
@@ -180,7 +188,13 @@ export function Dashboard() {
     input.click();
   };
 
-  const isActive = configs.find((c) => c.name === selectedName)?.active ?? false;
+  const handleBackToList = () => {
+    setEditingName(null);
+    setConfigMsg(null);
+    loadConfigList();
+  };
+
+  const isEditingActive = editingName ? (configs.find((c) => c.name === editingName)?.active ?? false) : false;
 
   return (
     <div
@@ -289,24 +303,15 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Config Editor */}
+      {/* ─── Configuration Section ─── */}
       <div className="fluent-card" style={{ padding: 0, overflow: "hidden" }}>
         <button
           onClick={() => setConfigExpanded(!configExpanded)}
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-            padding: "14px 20px",
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            color: "var(--text-primary)",
-            fontFamily: "inherit",
-            fontSize: 14,
-            fontWeight: 600,
-            textAlign: "left",
+            display: "flex", alignItems: "center", gap: 8, width: "100%",
+            padding: "14px 20px", border: "none", background: "transparent",
+            cursor: "pointer", color: "var(--text-primary)", fontFamily: "inherit",
+            fontSize: 14, fontWeight: 600, textAlign: "left",
           }}
         >
           <DocumentRegular style={{ fontSize: 18 }} />
@@ -317,90 +322,65 @@ export function Dashboard() {
         </button>
 
         {configExpanded && (
-          <div style={{ padding: "0 20px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ padding: "0 20px 18px" }}>
 
-            {/* Config Tabs */}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              {configs.map((c) => (
-                <button
-                  key={c.name}
-                  className={`fluent-btn reveal-target ${selectedName === c.name ? "accent" : ""}`}
-                  onClick={() => { setSelectedName(c.name); setConfigMsg(null); }}
-                  style={{ fontSize: 12, minHeight: 28, padding: "4px 12px", position: "relative" }}
-                >
-                  {c.active && <CheckmarkCircleRegular style={{ fontSize: 13 }} />}
-                  {c.name}
-                </button>
-              ))}
-
-              {/* Create new */}
-              {creating ? (
-                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                  <input
-                    autoFocus
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
-                    placeholder="name"
-                    style={{
-                      border: "1px solid var(--border-default)",
-                      borderRadius: "var(--radius-sm)",
-                      padding: "3px 8px",
-                      fontSize: 12,
-                      background: "var(--bg-surface)",
-                      color: "var(--text-primary)",
-                      outline: "none",
-                      width: 100,
-                      height: 28,
-                      fontFamily: "inherit",
-                    }}
-                  />
-                  <button className="fluent-btn accent reveal-target" onClick={handleCreate} style={{ fontSize: 12, minHeight: 28, padding: "4px 8px" }}>OK</button>
-                  <button className="fluent-btn reveal-target" onClick={() => setCreating(false)} style={{ fontSize: 12, minHeight: 28, padding: "4px 8px" }}>✕</button>
-                </div>
-              ) : (
-                <button
-                  className="fluent-btn reveal-target"
-                  onClick={() => { setCreating(true); setNewName(""); }}
-                  style={{ fontSize: 12, minHeight: 28, padding: "4px 8px" }}
-                  title="New config"
-                >
-                  <AddRegular style={{ fontSize: 14 }} />
-                </button>
-              )}
-
-              <button
-                className="fluent-btn reveal-target"
-                onClick={handleImportFile}
-                style={{ fontSize: 12, minHeight: 28, padding: "4px 10px" }}
+            {/* Message bar (shared between list & detail) */}
+            {configMsg && (
+              <div
+                className={`infobar ${configMsg.type === "err" ? "error" : ""}`}
+                style={{
+                  marginBottom: 12,
+                  ...(configMsg.type === "ok" ? { background: "var(--status-success-bg)", borderColor: "var(--status-success)" } : {}),
+                }}
               >
-                <ArrowImportRegular style={{ fontSize: 14 }} />
-                Import
-              </button>
-            </div>
-
-            {/* Empty state */}
-            {configs.length === 0 && (
-              <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-tertiary)", fontSize: 13 }}>
-                No configs yet. Click <strong>+</strong> to create one or <strong>Import</strong> a file.
+                {configMsg.text}
               </div>
             )}
 
-            {/* Toolbar (when a config is selected) */}
-            {selectedName && (
-              <>
+            {/* ═══ Detail / Editor View ═══ */}
+            {editingName !== null ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* Back + title */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button
+                    className="fluent-btn reveal-target"
+                    onClick={handleBackToList}
+                    style={{ fontSize: 12, minHeight: 28, padding: "4px 10px" }}
+                  >
+                    <ArrowLeftRegular style={{ fontSize: 14 }} />
+                    Back
+                  </button>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
+                    {editingName}
+                  </span>
+                  {isEditingActive && (
+                    <span style={{ fontSize: 11, color: "var(--accent-default)", fontWeight: 600 }}>
+                      ✦ Active
+                    </span>
+                  )}
+                </div>
+
+                {/* Toolbar */}
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  {!isActive && (
-                    <button className="fluent-btn accent reveal-target" onClick={handleSetActive} style={{ fontSize: 13 }}>
+                  {!isEditingActive && (
+                    <button className="fluent-btn accent reveal-target" onClick={() => handleSetActive(editingName)} style={{ fontSize: 13 }}>
                       <CheckmarkCircleRegular style={{ fontSize: 16 }} />
                       Set Active
                     </button>
                   )}
-                  <button className="fluent-btn reveal-target" onClick={() => selectedName && loadConfigContent(selectedName)} style={{ fontSize: 13 }}>
+                  <button className="fluent-btn reveal-target" onClick={() => openEditor(editingName)} style={{ fontSize: 13 }}>
                     Reload
                   </button>
-                  {!isActive && (
-                    <button className="fluent-btn reveal-target" onClick={handleDelete} style={{ fontSize: 13, color: "var(--status-danger)" }}>
+                  <button
+                    className="fluent-btn reveal-target"
+                    onClick={() => { setRenamingName(editingName); setRenameInput(editingName); }}
+                    style={{ fontSize: 13 }}
+                  >
+                    <EditRegular style={{ fontSize: 16 }} />
+                    Rename
+                  </button>
+                  {!isEditingActive && (
+                    <button className="fluent-btn reveal-target" onClick={() => handleDelete(editingName)} style={{ fontSize: 13, color: "var(--status-danger)" }}>
                       <DeleteRegular style={{ fontSize: 16 }} />
                       Delete
                     </button>
@@ -416,48 +396,176 @@ export function Dashboard() {
                   </button>
                 </div>
 
-                {/* Message */}
-                {configMsg && (
-                  <div
-                    className={`infobar ${configMsg.type === "err" ? "error" : ""}`}
-                    style={configMsg.type === "ok" ? { background: "var(--status-success-bg)", borderColor: "var(--status-success)" } : undefined}
-                  >
-                    {configMsg.text}
+                {/* Rename inline */}
+                {renamingName === editingName && (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      autoFocus
+                      value={renameInput}
+                      onChange={(e) => setRenameInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleRename(editingName); if (e.key === "Escape") setRenamingName(null); }}
+                      style={{
+                        border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
+                        padding: "4px 10px", fontSize: 13, background: "var(--bg-surface)",
+                        color: "var(--text-primary)", outline: "none", flex: 1, height: 30, fontFamily: "inherit",
+                      }}
+                    />
+                    <button className="fluent-btn accent reveal-target" onClick={() => handleRename(editingName)} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>
+                      Confirm
+                    </button>
+                    <button className="fluent-btn reveal-target" onClick={() => setRenamingName(null)} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>
+                      Cancel
+                    </button>
                   </div>
                 )}
 
                 {/* Editor */}
                 <textarea
                   value={configText}
-                  onChange={(e) => {
-                    setConfigText(e.target.value);
-                    setConfigDirty(true);
-                    setConfigMsg(null);
-                  }}
+                  onChange={(e) => { setConfigText(e.target.value); setConfigDirty(true); setConfigMsg(null); }}
                   spellCheck={false}
+                  placeholder="Paste your sing-box config JSON here..."
                   style={{
-                    width: "100%",
-                    height: 280,
-                    resize: "vertical",
+                    width: "100%", height: 300, resize: "vertical",
                     fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    padding: 12,
-                    borderRadius: "var(--radius-sm)",
-                    border: "1px solid var(--border-default)",
-                    background: "var(--bg-surface)",
-                    color: "var(--text-primary)",
-                    outline: "none",
-                    tabSize: 2,
+                    fontSize: 12, lineHeight: 1.5, padding: 12,
+                    borderRadius: "var(--radius-sm)", border: "1px solid var(--border-default)",
+                    background: "var(--bg-surface)", color: "var(--text-primary)",
+                    outline: "none", tabSize: 2,
                   }}
                   onFocus={(e) => (e.target.style.borderColor = "var(--accent-default)")}
                   onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
                 />
 
                 <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                  {isActive ? "✦ Active config" : "Inactive"} · Paste JSON or import from file. Save and restart core to apply.
+                  Paste config JSON or import from file. Save and restart core to apply.
                 </div>
-              </>
+              </div>
+
+            ) : (
+              /* ═══ List View ═══ */
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {/* Toolbar */}
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {creating ? (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flex: 1 }}>
+                      <input
+                        autoFocus
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
+                        placeholder="Config name"
+                        style={{
+                          border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
+                          padding: "4px 10px", fontSize: 13, background: "var(--bg-surface)",
+                          color: "var(--text-primary)", outline: "none", width: 160, height: 30, fontFamily: "inherit",
+                        }}
+                      />
+                      <button className="fluent-btn accent reveal-target" onClick={handleCreate} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>Create</button>
+                      <button className="fluent-btn reveal-target" onClick={() => setCreating(false)} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>Cancel</button>
+                    </div>
+                  ) : (
+                    <>
+                      <button className="fluent-btn reveal-target" onClick={() => { setCreating(true); setNewName(""); }} style={{ fontSize: 13 }}>
+                        <AddRegular style={{ fontSize: 16 }} />
+                        New
+                      </button>
+                      <button className="fluent-btn reveal-target" onClick={handleImportFile} style={{ fontSize: 13 }}>
+                        <ArrowImportRegular style={{ fontSize: 16 }} />
+                        Import
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* Config list */}
+                {configs.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "28px 0", color: "var(--text-tertiary)", fontSize: 13 }}>
+                    No configs yet. Click <strong>New</strong> to create or <strong>Import</strong> a file.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    {configs.map((c) => (
+                      <div
+                        key={c.name}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          padding: "10px 14px", borderRadius: "var(--radius-sm)",
+                          border: c.active ? "1px solid var(--accent-default)" : "1px solid var(--border-card)",
+                          background: c.active ? "var(--bg-selected)" : "var(--bg-card)",
+                          cursor: "pointer", transition: "background 0.1s",
+                        }}
+                        onClick={() => openEditor(c.name)}
+                        onMouseEnter={(e) => { if (!c.active) e.currentTarget.style.background = "var(--bg-card-hover)"; }}
+                        onMouseLeave={(e) => { if (!c.active) e.currentTarget.style.background = "var(--bg-card)"; }}
+                      >
+                        <DocumentRegular style={{ fontSize: 16, color: "var(--text-secondary)", flexShrink: 0 }} />
+                        {/* Name + rename inline */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {renamingName === c.name ? (
+                            <div style={{ display: "flex", gap: 4, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+                              <input
+                                autoFocus
+                                value={renameInput}
+                                onChange={(e) => setRenameInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleRename(c.name); if (e.key === "Escape") setRenamingName(null); }}
+                                style={{
+                                  border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
+                                  padding: "2px 8px", fontSize: 13, background: "var(--bg-surface)",
+                                  color: "var(--text-primary)", outline: "none", flex: 1, fontFamily: "inherit",
+                                }}
+                              />
+                              <button className="fluent-btn accent" onClick={(e) => { e.stopPropagation(); handleRename(c.name); }} style={{ fontSize: 11, minHeight: 24, padding: "2px 8px" }}>OK</button>
+                              <button className="fluent-btn" onClick={(e) => { e.stopPropagation(); setRenamingName(null); }} style={{ fontSize: 11, minHeight: 24, padding: "2px 8px" }}>✕</button>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: 13, fontWeight: c.active ? 600 : 400, color: "var(--text-primary)" }}>
+                              {c.name}
+                            </span>
+                          )}
+                        </div>
+                        {c.active && (
+                          <span style={{ fontSize: 11, color: "var(--accent-default)", fontWeight: 600, whiteSpace: "nowrap" }}>
+                            <CheckmarkCircleRegular style={{ fontSize: 13, marginRight: 3, verticalAlign: "middle" }} />
+                            Active
+                          </span>
+                        )}
+                        {/* Action buttons */}
+                        <div style={{ display: "flex", gap: 2, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                          <button
+                            className="fluent-btn reveal-target"
+                            onClick={() => { setRenamingName(c.name); setRenameInput(c.name); }}
+                            style={{ fontSize: 11, minHeight: 26, padding: "2px 6px" }}
+                            title="Rename"
+                          >
+                            <EditRegular style={{ fontSize: 13 }} />
+                          </button>
+                          {!c.active && (
+                            <>
+                              <button
+                                className="fluent-btn reveal-target"
+                                onClick={() => handleSetActive(c.name)}
+                                style={{ fontSize: 11, minHeight: 26, padding: "2px 6px" }}
+                                title="Set as active config"
+                              >
+                                <CheckmarkCircleRegular style={{ fontSize: 13 }} />
+                              </button>
+                              <button
+                                className="fluent-btn reveal-target"
+                                onClick={() => handleDelete(c.name)}
+                                style={{ fontSize: 11, minHeight: 26, padding: "2px 6px", color: "var(--status-danger)" }}
+                                title="Delete"
+                              >
+                                <DeleteRegular style={{ fontSize: 13 }} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -466,21 +574,12 @@ export function Dashboard() {
       {/* Status Bar */}
       <div
         style={{
-          display: "flex",
-          gap: 24,
-          fontSize: 12,
-          color: "var(--text-secondary)",
-          padding: "4px 0",
-          borderTop: "1px solid var(--border-divider)",
-          paddingTop: 12,
+          display: "flex", gap: 24, fontSize: 12, color: "var(--text-secondary)",
+          padding: "4px 0", borderTop: "1px solid var(--border-divider)", paddingTop: 12,
         }}
       >
-        <span>
-          Proxy: <code style={{ color: "var(--text-primary)" }}>{status.proxy_server || "—"}</code>
-        </span>
-        <span>
-          API: <code style={{ color: "var(--text-primary)" }}>{status.api_address || "—"}</code>
-        </span>
+        <span>Proxy: <code style={{ color: "var(--text-primary)" }}>{status.proxy_server || "—"}</code></span>
+        <span>API: <code style={{ color: "var(--text-primary)" }}>{status.api_address || "—"}</code></span>
       </div>
     </div>
   );
