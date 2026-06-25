@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::clash::{ClashClient, ProxyGroup};
 use crate::error::AppError;
+use crate::native_api::{NativeClient, ProxyGroup};
 
 /// Shared proxy group state
 pub struct GroupState {
     pub groups: Vec<ProxyGroup>,
-    pub client: Option<ClashClient>,
+    pub client: Option<NativeClient>,
 }
 
 pub type Groups = Arc<Mutex<GroupState>>;
@@ -22,8 +22,8 @@ pub fn new_groups() -> Groups {
 }
 
 impl GroupState {
-    /// Fetch selector groups from the Clash API and cache them
-    pub async fn load(&mut self, client: ClashClient) -> Result<Vec<ProxyGroup>, AppError> {
+    /// Fetch selector groups from the native API and cache them
+    pub async fn load(&mut self, client: NativeClient) -> Result<Vec<ProxyGroup>, AppError> {
         let groups = client.get_selector_groups().await?;
         self.groups = groups.clone();
         self.client = Some(client);
