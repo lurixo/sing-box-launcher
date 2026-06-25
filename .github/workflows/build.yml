@@ -28,7 +28,7 @@ jobs:
           node-version: "22"
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: Fetch sing-box core
         shell: pwsh
