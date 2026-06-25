@@ -13,6 +13,13 @@ fn default_true() -> bool {
     true
 }
 
+fn default_log_level() -> String {
+    "info".into()
+}
+
+/// Allowed sing-box log levels, lowest to highest verbosity.
+pub const LOG_LEVELS: [&str; 5] = ["trace", "debug", "info", "warn", "error"];
+
 /// Persistent application settings stored in settings.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -22,6 +29,10 @@ pub struct AppSettings {
     pub active_config: String,
     #[serde(default = "default_true")]
     pub run_as_admin: bool,
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+    #[serde(default)]
+    pub log_persist: bool,
 }
 
 impl Default for AppSettings {
@@ -30,6 +41,8 @@ impl Default for AppSettings {
             silent_start: false,
             active_config: "default".into(),
             run_as_admin: true,
+            log_level: default_log_level(),
+            log_persist: false,
         }
     }
 }
@@ -90,6 +103,31 @@ pub async fn set_run_as_admin(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.run_as_admin = enabled;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_log_level(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    level: String,
+) -> Result<(), AppError> {
+    if !LOG_LEVELS.contains(&level.as_str()) {
+        return Err(AppError::Config(format!("invalid log level: {level}")));
+    }
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.log_level = level;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_log_persist(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.log_persist = enabled;
     save_settings(&mgr.base_dir, &settings)
 }
 

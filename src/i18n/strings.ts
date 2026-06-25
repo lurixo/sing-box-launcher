@@ -3,6 +3,7 @@ import { useAppStore } from "../stores/appStore";
 export const en = {
   "nav.dashboard": "Dashboard",
   "nav.proxies": "Proxies",
+  "nav.logs": "Logs",
   "nav.settings": "Settings",
   "nav.menu": "Menu",
 
@@ -64,6 +65,15 @@ export const en = {
   "proxies.selected": "Selected:",
   "proxies.timeout": "timeout",
 
+  "logs.title": "Logs",
+  "logs.core": "Core",
+  "logs.app": "App",
+  "logs.minLevel": "Min level",
+  "logs.clear": "Clear",
+  "logs.autoScroll": "Auto-scroll",
+  "logs.empty": "No logs yet.",
+  "logs.count": "{count} lines",
+
   "settings.title": "Settings",
   "settings.general": "General",
   "settings.runAsAdmin": "Run as administrator",
@@ -75,6 +85,11 @@ export const en = {
   "settings.uwpLoopback": "UWP loopback",
   "settings.uwpLoopbackDesc": "Launch loopback tool so UWP apps can use the local proxy",
   "settings.openTool": "Open Tool",
+  "settings.logs": "Logs",
+  "settings.logLevel": "Core log level",
+  "settings.logLevelDesc": "Higher verbosity aids debugging but may affect performance. Restart the core to apply.",
+  "settings.logPersist": "Save logs to file",
+  "settings.logPersistDesc": "Append core logs to sing-box.log for later inspection.",
   "settings.appearance": "Appearance",
   "settings.theme": "Theme",
   "settings.themeLight": "Light",
@@ -111,6 +126,7 @@ export type TranslationKey = keyof typeof en;
 export const zhCN: Record<TranslationKey, string> = {
   "nav.dashboard": "仪表盘",
   "nav.proxies": "代理",
+  "nav.logs": "日志",
   "nav.settings": "设置",
   "nav.menu": "菜单",
 
@@ -172,6 +188,15 @@ export const zhCN: Record<TranslationKey, string> = {
   "proxies.selected": "已选：",
   "proxies.timeout": "超时",
 
+  "logs.title": "日志",
+  "logs.core": "内核",
+  "logs.app": "应用",
+  "logs.minLevel": "最低级别",
+  "logs.clear": "清空",
+  "logs.autoScroll": "自动滚动",
+  "logs.empty": "暂无日志。",
+  "logs.count": "{count} 行",
+
   "settings.title": "设置",
   "settings.general": "通用",
   "settings.runAsAdmin": "默认以管理员权限启动",
@@ -183,6 +208,11 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.uwpLoopback": "UWP 回环豁免",
   "settings.uwpLoopbackDesc": "启动回环工具，让 UWP 应用可以使用本地代理",
   "settings.openTool": "打开工具",
+  "settings.logs": "日志",
+  "settings.logLevel": "内核日志级别",
+  "settings.logLevelDesc": "级别越详细越利于调试，但可能影响性能。重启内核后生效。",
+  "settings.logPersist": "保存日志到文件",
+  "settings.logPersistDesc": "将内核日志追加写入 sing-box.log，便于事后排查。",
   "settings.appearance": "外观",
   "settings.theme": "主题",
   "settings.themeLight": "浅色",

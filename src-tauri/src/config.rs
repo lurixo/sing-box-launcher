@@ -61,8 +61,12 @@ pub fn config_path(base_dir: &Path, name: &str) -> Result<PathBuf, AppError> {
     Ok(configs_dir(base_dir).join(format!("{name}.json")))
 }
 
-/// Read the active config, inject clash_api settings, write config_runtime.json.
-pub fn prepare_runtime_config(base_dir: &Path, config_name: &str) -> Result<ConfigInfo, AppError> {
+/// Read the active config, inject the native API + log level, write config_runtime.json.
+pub fn prepare_runtime_config(
+    base_dir: &Path,
+    config_name: &str,
+    log_level: &str,
+) -> Result<ConfigInfo, AppError> {
     let path = config_path(base_dir, config_name)?;
     let raw = std::fs::read_to_string(&path)
         .map_err(|e| AppError::Config(format!("read {config_name}.json: {e}")))?;
@@ -71,6 +75,7 @@ pub fn prepare_runtime_config(base_dir: &Path, config_name: &str) -> Result<Conf
         serde_json::from_str(&raw).map_err(|e| AppError::Config(format!("parse config: {e}")))?;
 
     let (api_address, api_secret) = inject_api(&mut config)?;
+    inject_log_level(&mut config, log_level);
     let proxy_server = extract_proxy_server(&config);
 
     let runtime_path = base_dir.join("config_runtime.json");
@@ -368,6 +373,14 @@ fn combine_output(out: &std::process::Output) -> String {
     let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
     s.push_str(&String::from_utf8_lossy(&out.stderr));
     s.trim().to_string()
+}
+
+/// Override `log.level` in the config so the GUI setting drives core verbosity.
+fn inject_log_level(config: &mut Value, level: &str) {
+    if let Some(obj) = config.as_object_mut() {
+        let log = ensure_object(obj, "log");
+        log.insert("level".into(), Value::String(level.to_string()));
+    }
 }
 
 /// Generate a random 128-bit hex token for the native API secret.
