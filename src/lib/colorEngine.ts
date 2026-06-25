@@ -12,18 +12,20 @@ export interface HSL {
   l: number; // 0-100
 }
 
-export function hexToHSL(hex: string): HSL {
-  let r = 0, g = 0, b = 0;
-  const h = hex.replace("#", "");
+// Normalize to a 6-digit hex (no #); invalid input falls back to default blue.
+function normalizeHex(hex: string): string {
+  let h = hex.trim().replace(/^#/, "");
   if (h.length === 3) {
-    r = parseInt(h[0] + h[0], 16) / 255;
-    g = parseInt(h[1] + h[1], 16) / 255;
-    b = parseInt(h[2] + h[2], 16) / 255;
-  } else {
-    r = parseInt(h.substring(0, 2), 16) / 255;
-    g = parseInt(h.substring(2, 4), 16) / 255;
-    b = parseInt(h.substring(4, 6), 16) / 255;
+    h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
   }
+  return /^[0-9a-fA-F]{6}$/.test(h) ? h : "0078D4";
+}
+
+export function hexToHSL(hex: string): HSL {
+  const h = normalizeHex(hex);
+  const r = parseInt(h.substring(0, 2), 16) / 255;
+  const g = parseInt(h.substring(2, 4), 16) / 255;
+  const b = parseInt(h.substring(4, 6), 16) / 255;
 
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
@@ -67,7 +69,7 @@ export function hslToHex(h: number, s: number, l: number): string {
 // ─── Relative Luminance & Contrast ──────────────────────────────────────────
 
 function hexToRGB(hex: string): [number, number, number] {
-  const h = hex.replace("#", "");
+  const h = normalizeHex(hex);
   return [
     parseInt(h.substring(0, 2), 16),
     parseInt(h.substring(2, 4), 16),
@@ -249,8 +251,9 @@ function ensureButtonContrast(accentHex: string): { bg: string; hover: string; a
     }
   }
 
-  // Fallback
-  return { bg: accentHex, hover: accentHex, active: accentHex, text: white };
+  // Fallback: keep the accent but pick the text color with the best contrast.
+  const text = contrastRatio(accentHex, white) >= contrastRatio(accentHex, dark) ? white : dark;
+  return { bg: accentHex, hover: accentHex, active: accentHex, text };
 }
 
 // ─── Status Colors per theme ────────────────────────────────────────────────

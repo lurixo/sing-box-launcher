@@ -1,17 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   WeatherSunnyRegular,
   WeatherMoonRegular,
   DesktopRegular,
   ColorRegular,
   GlobeRegular,
+  BoxRegular,
+  ArrowSyncRegular,
+  ArrowDownloadRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { ACCENT_PRESETS } from "../lib/colorEngine";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
+import { listen } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { useReveal } from "../hooks/useReveal";
-import type { Theme, AppSettings } from "../types";
+import type { Theme, AppSettings, CoreInfo, CoreUpdateCheck, CoreBuildInfo } from "../types";
 
 const themes: { id: Theme; icon: React.ReactNode; label: string }[] = [
   { id: "light", icon: <WeatherSunnyRegular />, label: "Light" },
@@ -71,7 +76,11 @@ export function Settings() {
   const setAccentSource = useAppStore((s) => s.setAccentSource);
   const revealRef = useReveal<HTMLDivElement>();
 
+  const status = useAppStore((s) => s.status);
+
   const [customInput, setCustomInput] = useState(accentColor);
+  const [appVersion, setAppVersion] = useState("");
+  const [genErr, setGenErr] = useState<string | null>(null);
 
   // ─── Autostart state ─────────────────────────────────────────────
   const [autostart, setAutostart] = useState(false);
@@ -82,6 +91,20 @@ export function Settings() {
   const [uwpLoading, setUwpLoading] = useState(false);
   const [uwpResult, setUwpResult] = useState<string | null>(null);
 
+  // ─── Core state ──────────────────────────────────────────────────
+  const [coreInfo, setCoreInfo] = useState<CoreInfo | null>(null);
+  const [coreCheck, setCoreCheck] = useState<CoreUpdateCheck | null>(null);
+  const [coreBusy, setCoreBusy] = useState(false);
+  const [coreMsg, setCoreMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
+
+  const loadCoreInfo = useCallback(async () => {
+    try {
+      setCoreInfo(await invoke<CoreInfo>("get_core_info"));
+    } catch (e) {
+      setCoreMsg({ type: "err", text: String(e) });
+    }
+  }, []);
+
   // Load autostart + settings on mount
   useEffect(() => {
     (async () => {
@@ -90,12 +113,22 @@ export function Settings() {
         setAutostart(enabled);
         const settings = await invoke<AppSettings>("get_settings");
         setSilentStart(settings.silent_start);
-      } catch {
-        // ignore
+      } catch (e) {
+        setGenErr(String(e));
       }
       setAutostartLoading(false);
     })();
   }, []);
+
+  // Load version + core info, listen for update progress
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+    loadCoreInfo();
+    const un = listen<{ stage: string; message: string }>("core-update-progress", (e) => {
+      setCoreMsg({ type: e.payload.stage === "done" ? "ok" : "info", text: e.payload.message });
+    });
+    return () => { un.then((f) => f()); };
+  }, [loadCoreInfo]);
 
   const handleAutostartToggle = async (val: boolean) => {
     try {
@@ -108,8 +141,8 @@ export function Settings() {
         await invoke("set_silent_start", { enabled: false });
       }
       setAutostart(val);
-    } catch {
-      // ignore
+    } catch (e) {
+      setGenErr(String(e));
     }
   };
 
@@ -117,9 +150,40 @@ export function Settings() {
     try {
       await invoke("set_silent_start", { enabled: val });
       setSilentStart(val);
-    } catch {
-      // ignore
+    } catch (e) {
+      setGenErr(String(e));
     }
+  };
+
+  const handleCheckCore = async () => {
+    setCoreBusy(true);
+    setCoreMsg(null);
+    try {
+      const c = await invoke<CoreUpdateCheck>("check_core_update");
+      setCoreCheck(c);
+      setCoreMsg(
+        c.update_available
+          ? { type: "info", text: `Update available: ${c.latest.version}` }
+          : { type: "ok", text: "Core is up to date." }
+      );
+    } catch (e) {
+      setCoreMsg({ type: "err", text: String(e) });
+    }
+    setCoreBusy(false);
+  };
+
+  const handleUpdateCore = async () => {
+    setCoreBusy(true);
+    setCoreMsg(null);
+    try {
+      const info = await invoke<CoreBuildInfo>("update_core");
+      setCoreMsg({ type: "ok", text: `Core updated to ${info.version}.` });
+      setCoreCheck(null);
+      await loadCoreInfo();
+    } catch (e) {
+      setCoreMsg({ type: "err", text: String(e) });
+    }
+    setCoreBusy(false);
   };
 
   const handleUwpLoopback = async () => {
@@ -150,6 +214,19 @@ export function Settings() {
       <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
         Settings
       </h1>
+
+      {genErr && (
+        <div className="infobar error">
+          <span style={{ flex: 1 }}>{genErr}</span>
+          <button
+            className="fluent-btn reveal-target"
+            onClick={() => setGenErr(null)}
+            style={{ padding: "2px 8px", minHeight: 24, fontSize: 12 }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* ─── General ─── */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
@@ -327,12 +404,90 @@ export function Settings() {
         </div>
       </div>
 
+      {/* ─── Core ─── */}
+      <div className="fluent-card" style={{ padding: "18px 20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
+          <BoxRegular style={{ fontSize: 18 }} />
+          Core
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>sing-box core</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+              {coreInfo?.present
+                ? coreInfo.build
+                  ? `Version ${coreInfo.build.version}`
+                  : "Installed (version unknown)"
+                : "Not installed"}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="fluent-btn reveal-target"
+              onClick={handleCheckCore}
+              disabled={coreBusy}
+              style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+            >
+              {coreBusy ? (
+                <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} />
+              ) : (
+                <ArrowSyncRegular style={{ fontSize: 14 }} />
+              )}
+              Check
+            </button>
+            {(coreCheck?.update_available || !coreInfo?.present) && (
+              <button
+                className="fluent-btn accent reveal-target"
+                onClick={handleUpdateCore}
+                disabled={coreBusy || status.running}
+                title={status.running ? "Stop the core before updating" : undefined}
+                style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+              >
+                <ArrowDownloadRegular style={{ fontSize: 14 }} />
+                {coreInfo?.present ? "Update" : "Download"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {status.running && (coreCheck?.update_available || !coreInfo?.present) && (
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
+            Stop the core to update it.
+          </div>
+        )}
+
+        {coreMsg && (
+          <div
+            className="infobar"
+            style={{
+              marginTop: 10,
+              background:
+                coreMsg.type === "err"
+                  ? "var(--status-danger-bg)"
+                  : coreMsg.type === "ok"
+                  ? "var(--status-success-bg)"
+                  : undefined,
+              borderColor:
+                coreMsg.type === "err"
+                  ? "var(--status-danger)"
+                  : coreMsg.type === "ok"
+                  ? "var(--status-success)"
+                  : undefined,
+            }}
+          >
+            {coreMsg.text}
+          </div>
+        )}
+      </div>
+
       {/* ─── About ─── */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>About</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "var(--text-secondary)" }}>
           <div>
-            <strong style={{ color: "var(--text-primary)" }}>sing-box launcher</strong>{" "}v0.1.0
+            <strong style={{ color: "var(--text-primary)" }}>sing-box launcher</strong>
+            {appVersion ? ` v${appVersion}` : ""}
           </div>
           <div>A lightweight GUI for managing the sing-box proxy core.</div>
           <div style={{ marginTop: 4 }}>Built with Tauri v2 + React 19 + Rust</div>

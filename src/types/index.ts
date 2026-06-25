@@ -29,6 +29,25 @@ export interface ConfigEntry {
   active: boolean;
 }
 
+export interface CoreBuildInfo {
+  version: string;
+  windows_asset: string;
+  windows_sha256: string;
+  built_at: string;
+  run_id: string;
+}
+
+export interface CoreInfo {
+  present: boolean;
+  build: CoreBuildInfo | null;
+}
+
+export interface CoreUpdateCheck {
+  current: CoreBuildInfo | null;
+  latest: CoreBuildInfo;
+  update_available: boolean;
+}
+
 export type DelayMap = Record<string, number>;
 
 export type Page = "dashboard" | "proxies" | "settings";

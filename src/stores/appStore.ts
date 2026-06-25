@@ -67,6 +67,7 @@ const defaultStatus: CoreStatus = {
 const STORAGE_THEME = "sb-theme";
 const STORAGE_ACCENT = "sb-accent";
 const STORAGE_ACCENT_SRC = "sb-accent-source";
+const STORAGE_GROUP = "sb-selected-group";
 const DEFAULT_ACCENT = "#0078D4";
 
 function load(key: string, fallback: string): string {
@@ -140,7 +141,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Proxy groups
   groups: [],
-  selectedGroup: null,
+  selectedGroup: load(STORAGE_GROUP, "") || null,
   delays: {},
   testingGroup: null,
 
@@ -234,7 +235,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  selectGroup: (group) => set({ selectedGroup: group }),
+  selectGroup: (group) => {
+    save(STORAGE_GROUP, group);
+    set({ selectedGroup: group });
+  },
 
   setStatus: (status) => set({ status }),
   setGroups: (groups) => {

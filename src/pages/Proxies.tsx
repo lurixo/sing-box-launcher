@@ -33,6 +33,8 @@ export function Proxies() {
     testDelay,
     delays,
     testingGroup,
+    error,
+    clearError,
   } = useAppStore();
 
   const [search, setSearch] = useState("");
@@ -93,6 +95,18 @@ export function Proxies() {
       <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, padding: "20px 28px 12px", color: "var(--text-primary)", flexShrink: 0 }}>
         Proxies
       </h1>
+      {error && (
+        <div className="infobar error" style={{ margin: "0 28px 12px", flexShrink: 0 }}>
+          <span style={{ flex: 1 }}>{error}</span>
+          <button
+            className="fluent-btn reveal-target"
+            onClick={clearError}
+            style={{ padding: "2px 8px", minHeight: 24, fontSize: 12 }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
       {/* Group List */}
       <div
