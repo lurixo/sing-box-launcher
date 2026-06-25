@@ -52,13 +52,27 @@ export function Logs() {
         const map = new Map<number, LogLine>();
         for (const l of prev) map.set(l.seq, l);
         for (const l of incoming) map.set(l.seq, l);
-        return [...map.values()].sort((a, b) => a.seq - b.seq);
+        const merged = [...map.values()].sort((a, b) => a.seq - b.seq);
+        return merged.length > 5000 ? merged.slice(-5000) : merged;
       });
 
-    const unlisten = listen<LogLine>("log-line", (e) => merge([e.payload]));
-    invoke<LogLine[]>("get_logs").then(merge).catch(() => {});
+    // Register the live listener before fetching the backlog so no line slips
+    // through the gap between the snapshot and the subscription.
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    (async () => {
+      const fn = await listen<LogLine>("log-line", (e) => merge([e.payload]));
+      if (cancelled) { fn(); return; }
+      unlisten = fn;
+      try {
+        merge(await invoke<LogLine[]>("get_logs"));
+      } catch {
+        /* noop */
+      }
+    })();
     return () => {
-      unlisten.then((f) => f());
+      cancelled = true;
+      unlisten?.();
     };
   }, []);
 
