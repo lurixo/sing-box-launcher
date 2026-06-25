@@ -30,6 +30,12 @@ export interface ConfigEntry {
   active: boolean;
 }
 
+export interface CheckResult {
+  ok: boolean;
+  message: string;
+  content: string;
+}
+
 export interface CoreBuildInfo {
   version: string;
   windows_asset: string;

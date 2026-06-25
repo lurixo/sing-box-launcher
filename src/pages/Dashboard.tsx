@@ -18,12 +18,13 @@ import {
   CheckmarkCircleRegular,
   EditRegular,
   ArrowLeftRegular,
+  DocumentCheckmarkRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
-import type { ConfigEntry } from "../types";
+import type { ConfigEntry, CheckResult } from "../types";
 
 function formatUptime(secs: number): string {
   if (secs === 0) return "—";
@@ -59,6 +60,7 @@ export function Dashboard() {
   const [configText, setConfigText] = useState("");
   const [configDirty, setConfigDirty] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [configMsg, setConfigMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   // Creating
   const [creating, setCreating] = useState(false);
@@ -106,6 +108,27 @@ export function Dashboard() {
       setConfigMsg({ type: "err", text: String(e) });
     }
     setConfigSaving(false);
+  };
+
+  const handleCheckFormat = async () => {
+    if (!editingName) return;
+    setChecking(true);
+    setConfigMsg(null);
+    try {
+      await invoke("save_config", { name: editingName, content: configText });
+      setConfigDirty(false);
+      const res = await invoke<CheckResult>("check_and_format_config", { name: editingName });
+      if (res.ok) {
+        setConfigText(res.content);
+        setConfigDirty(false);
+        setConfigMsg({ type: "ok", text: t("dashboard.checkOk") });
+      } else {
+        setConfigMsg({ type: "err", text: res.message });
+      }
+    } catch (e) {
+      setConfigMsg({ type: "err", text: String(e) });
+    }
+    setChecking(false);
   };
 
   const handleSetActive = async (name: string) => {
@@ -372,6 +395,15 @@ export function Dashboard() {
                   )}
                   <button className="fluent-btn reveal-target" onClick={() => openEditor(editingName)} style={{ fontSize: 13 }}>
                     {t("common.reload")}
+                  </button>
+                  <button
+                    className="fluent-btn reveal-target"
+                    onClick={handleCheckFormat}
+                    disabled={checking}
+                    style={{ fontSize: 13 }}
+                  >
+                    {checking ? <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <DocumentCheckmarkRegular style={{ fontSize: 16 }} />}
+                    {t("dashboard.checkFormat")}
                   </button>
                   <button
                     className="fluent-btn reveal-target"

@@ -266,6 +266,7 @@ pub fn run() {
             config::list_configs,
             config::get_config,
             config::save_config,
+            config::check_and_format_config,
             config::create_config,
             config::delete_config,
             config::rename_config,
