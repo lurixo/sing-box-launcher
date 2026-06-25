@@ -187,8 +187,13 @@ async fn test_group_delay(
     grp: tauri::State<'_, groups::Groups>,
     group: String,
 ) -> Result<HashMap<String, i32>, AppError> {
-    let grp = grp.lock().await;
-    grp.test_delay(&group).await
+    let client = {
+        let grp = grp.lock().await;
+        grp.client
+            .clone()
+            .ok_or_else(|| AppError::ClashApi("not connected".into()))?
+    };
+    client.test_group_delay(&group).await
 }
 
 #[tauri::command]

@@ -102,7 +102,7 @@ export function Settings() {
 
   // ─── UWP state ───────────────────────────────────────────────────
   const [uwpLoading, setUwpLoading] = useState(false);
-  const [uwpResult, setUwpResult] = useState<string | null>(null);
+  const [uwpResult, setUwpResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   // ─── Core state ──────────────────────────────────────────────────
   const [coreInfo, setCoreInfo] = useState<CoreInfo | null>(null);
@@ -215,9 +215,9 @@ export function Settings() {
     setUwpResult(null);
     try {
       const result = await invoke<string>("enable_uwp_loopback");
-      setUwpResult(result);
+      setUwpResult({ ok: true, text: result });
     } catch (e) {
-      setUwpResult(`Error: ${e}`);
+      setUwpResult({ ok: false, text: String(e) });
     }
     setUwpLoading(false);
   };
@@ -326,11 +326,11 @@ export function Settings() {
             className="infobar"
             style={{
               marginTop: 4,
-              background: uwpResult.startsWith("Error") ? "var(--status-danger-bg)" : "var(--status-success-bg)",
-              borderColor: uwpResult.startsWith("Error") ? "var(--status-danger)" : "var(--status-success)",
+              background: uwpResult.ok ? "var(--status-success-bg)" : "var(--status-danger-bg)",
+              borderColor: uwpResult.ok ? "var(--status-success)" : "var(--status-danger)",
             }}
           >
-            {uwpResult}
+            {uwpResult.text}
           </div>
         )}
       </div>
@@ -398,7 +398,7 @@ export function Settings() {
                   className={`accent-swatch ${accentColor.toLowerCase() === preset.hex.toLowerCase() ? "active" : ""}`}
                   style={{ background: preset.hex }}
                   onClick={() => setAccentColor(preset.hex)}
-                  aria-label={`Accent color: ${preset.label}`}
+                  aria-label={t("settings.accentColorSwatch", { name: preset.label })}
                   title={preset.label}
                 />
               ))}

@@ -518,7 +518,7 @@ export function Dashboard() {
                                 }}
                               />
                               <button className="fluent-btn accent" onClick={(e) => { e.stopPropagation(); handleRename(c.name); }} style={{ fontSize: 11, minHeight: 24, padding: "2px 8px" }}>{t("common.confirm")}</button>
-                              <button className="fluent-btn" onClick={(e) => { e.stopPropagation(); setRenamingName(null); }} style={{ fontSize: 11, minHeight: 24, padding: "2px 8px" }}>✕</button>
+                              <button className="fluent-btn" onClick={(e) => { e.stopPropagation(); setRenamingName(null); }} title={t("common.cancel")} aria-label={t("common.cancel")} style={{ fontSize: 11, minHeight: 24, padding: "2px 8px" }}>✕</button>
                             </div>
                           ) : (
                             <span style={{ fontSize: 13, fontWeight: c.active ? 600 : 400, color: "var(--text-primary)" }}>

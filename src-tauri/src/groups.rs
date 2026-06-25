@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -45,16 +44,6 @@ impl GroupState {
         }
 
         Ok(())
-    }
-
-    /// Test delay for a group and return results
-    pub async fn test_delay(&self, group: &str) -> Result<HashMap<String, i32>, AppError> {
-        let client = self
-            .client
-            .as_ref()
-            .ok_or_else(|| AppError::ClashApi("not connected".into()))?;
-
-        client.test_group_delay(group).await
     }
 
     /// Clear state (called on core stop)

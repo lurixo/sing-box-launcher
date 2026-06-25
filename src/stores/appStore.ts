@@ -128,7 +128,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // Language
-  lang: load(STORAGE_LANG, "zh-CN") as Lang,
+  lang: ((v) => (v === "en" || v === "zh-CN" ? v : "zh-CN"))(load(STORAGE_LANG, "zh-CN")) as Lang,
   setLang: (lang) => {
     save(STORAGE_LANG, lang);
     set({ lang });

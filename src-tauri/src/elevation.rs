@@ -49,13 +49,21 @@ fn relaunch_elevated() -> bool {
         "Start-Process -FilePath '{exe_str}' -ArgumentList '{ELEVATED_ARG}' -Verb RunAs"
     );
 
-    matches!(
-        std::process::Command::new("powershell")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status(),
-        Ok(status) if status.success()
-    )
+    match std::process::Command::new("powershell")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+    {
+        Ok(status) if status.success() => true,
+        Ok(_) => {
+            tracing::info!("UAC elevation declined; running unelevated");
+            false
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "powershell elevation spawn failed; running unelevated");
+            false
+        }
+    }
 }
 
 /// If `run_as_admin` is set and the process is neither elevated nor already a
