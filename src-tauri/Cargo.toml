@@ -15,7 +15,6 @@ tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
 tauri = { version = "2.10", features = ["tray-icon"] }
-tauri-plugin-shell = "2.3"
 tauri-plugin-autostart = "2.5"
 tokio = { version = "~1.47", features = ["full"] }
 reqwest = { version = "0.13", features = ["json"] }
@@ -27,6 +26,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4"
 urlencoding = "2.1"
+sha2 = "0.10"
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"

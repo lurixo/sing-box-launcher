@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::config::{self, ConfigInfo};
 use crate::error::AppError;
@@ -89,17 +90,22 @@ impl ManagerInner {
             .try_clone()
             .map_err(|e| AppError::Process(format!("clone log file: {e}")))?;
 
-        let child = Command::new(&sb_path)
-            .args(["run", "-c"])
-            .arg(&runtime_path)
-            .args(["-D"])
-            .arg(&self.base_dir)
-            .current_dir(&self.base_dir)
+        let mut child = build_command(&sb_path, &runtime_path, &self.base_dir)
             .stdout(std::process::Stdio::from(log_file))
             .stderr(std::process::Stdio::from(log_file_err))
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| AppError::Process(format!("spawn sing-box: {e}")))?;
+
+        // Catch configs that make sing-box exit immediately on startup.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if let Ok(Some(st)) = child.try_wait() {
+            let tail = read_log_tail(&log_path, 1200);
+            return Err(AppError::Process(format!(
+                "sing-box exited on startup (code {:?}). {tail}",
+                st.code()
+            )));
+        }
 
         self.child = Some(child);
         self.running = true;
@@ -115,6 +121,31 @@ impl ManagerInner {
         );
 
         Ok(info)
+    }
+
+    /// Reconcile `running` with the actual process state.
+    pub fn refresh_running(&mut self) {
+        self.reap();
+    }
+
+    /// Reap the child if it exited on its own, resetting state and clearing
+    /// the system proxy so a crashed core is never reported as running.
+    fn reap(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            if let Ok(Some(st)) = child.try_wait() {
+                warn!(code = ?st.code(), "sing-box exited unexpectedly");
+                self.child = None;
+                self.running = false;
+                self.started_at = None;
+                self.proxy_server.clear();
+                self.api_address.clear();
+                self.api_secret.clear();
+                if self.proxy_enabled {
+                    self.proxy_enabled = false;
+                    let _ = crate::proxy::set_system_proxy(false, "", "");
+                }
+            }
+        }
     }
 
     /// Stop the sing-box process
@@ -134,7 +165,8 @@ impl ManagerInner {
     }
 
     /// Get current status
-    pub fn status(&self) -> CoreStatus {
+    pub fn status(&mut self) -> CoreStatus {
+        self.reap();
         let uptime = self
             .started_at
             .map(|t| t.elapsed().as_secs())
@@ -155,4 +187,40 @@ pub fn resolve_base_dir() -> PathBuf {
     std::env::current_exe()
         .map(|p| p.parent().unwrap_or(Path::new(".")).to_path_buf())
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Build the sing-box run command without a console window on Windows.
+fn build_command(sb_path: &Path, runtime_path: &Path, base_dir: &Path) -> Command {
+    let mut cmd = Command::new(sb_path);
+    cmd.args(["run", "-c"])
+        .arg(runtime_path)
+        .args(["-D"])
+        .arg(base_dir)
+        .current_dir(base_dir);
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+/// Read the trailing portion of a log file (last `max` chars), char-safe.
+fn read_log_tail(path: &Path, max: usize) -> String {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let tail: String = trimmed
+        .chars()
+        .rev()
+        .take(max)
+        .collect::<Vec<char>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("Log: {tail}")
 }

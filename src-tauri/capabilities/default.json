@@ -17,7 +17,7 @@
     "core:window:allow-is-maximized",
     "core:window:allow-toggle-maximize",
     "core:tray:default",
-    "shell:default",
+    "core:app:default",
     "autostart:default"
   ]
 }

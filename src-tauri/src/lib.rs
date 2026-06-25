@@ -2,6 +2,7 @@ use tauri::Emitter;
 mod accent;
 mod clash;
 mod config;
+mod core_update;
 mod error;
 mod groups;
 mod manager;
@@ -126,7 +127,7 @@ async fn restart_core(
 
 #[tauri::command]
 async fn get_status(mgr: tauri::State<'_, manager::Manager>) -> Result<manager::CoreStatus, AppError> {
-    let mgr = mgr.lock().await;
+    let mut mgr = mgr.lock().await;
     Ok(mgr.status())
 }
 
@@ -229,7 +230,6 @@ pub fn run() {
 
     let dl_setup = dl.clone();
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -257,6 +257,9 @@ pub fn run() {
             settings::set_silent_start,
             settings::set_active_config,
             proxy::enable_uwp_loopback,
+            core_update::get_core_info,
+            core_update::check_core_update,
+            core_update::update_core,
         ])
         .setup(move |app| {
             dlog(&dl_setup, "setup: entering closure");

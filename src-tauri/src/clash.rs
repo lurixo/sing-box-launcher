@@ -44,7 +44,7 @@ impl ClashClient {
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
-            .expect("failed to build HTTP client");
+            .unwrap_or_else(|_| Client::new());
 
         Self {
             base_url: format!("http://{addr}"),
@@ -79,14 +79,16 @@ impl ClashClient {
 
     async fn fetch_groups(&self) -> Result<Vec<ProxyGroup>, AppError> {
         let url = format!("{}/proxies", self.base_url);
-        let resp: ProxiesResponse = self
+        let resp = self
             .client
             .get(&url)
             .headers(self.auth_headers())
             .send()
-            .await?
-            .json()
             .await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ClashApi(format!("HTTP {}", resp.status())));
+        }
+        let resp: ProxiesResponse = resp.json().await?;
 
         let groups: Vec<ProxyGroup> = resp
             .proxies
@@ -148,6 +150,9 @@ impl ClashClient {
             .headers(self.auth_headers())
             .send()
             .await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ClashApi(format!("HTTP {}", resp.status())));
+        }
 
         let result: HashMap<String, i32> = resp.json().await?;
         info!(group, tested = result.len(), "delay test complete");
@@ -157,10 +162,9 @@ impl ClashClient {
     fn auth_headers(&self) -> reqwest::header::HeaderMap {
         let mut headers = reqwest::header::HeaderMap::new();
         if !self.secret.is_empty() {
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", self.secret).parse().unwrap(),
-            );
+            if let Ok(value) = format!("Bearer {}", self.secret).parse() {
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+            }
         }
         headers
     }

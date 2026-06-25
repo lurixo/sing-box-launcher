@@ -64,18 +64,12 @@ fn notify_proxy_change() {
 /// Opens a GUI that lets the user manage UWP loopback exemptions.
 #[cfg(target_os = "windows")]
 #[tauri::command]
-pub async fn enable_uwp_loopback(app: tauri::AppHandle) -> Result<String, AppError> {
+pub async fn enable_uwp_loopback() -> Result<String, AppError> {
     use std::os::windows::process::CommandExt;
-    use tauri::Manager;
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| AppError::Proxy(format!("resolve resource dir: {e}")))?;
-
-    let tool_path = resource_dir.join("resources").join("EnableLoopback.exe");
+    let tool_path = crate::manager::resolve_base_dir().join("EnableLoopback.exe");
     if !tool_path.exists() {
         return Err(AppError::Proxy(format!(
             "EnableLoopback.exe not found at {}",
@@ -98,6 +92,6 @@ pub async fn enable_uwp_loopback(app: tauri::AppHandle) -> Result<String, AppErr
 
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
-pub async fn enable_uwp_loopback(_app: tauri::AppHandle) -> Result<String, AppError> {
+pub async fn enable_uwp_loopback() -> Result<String, AppError> {
     Err(AppError::Proxy("UWP loopback is only available on Windows".into()))
 }

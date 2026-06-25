@@ -35,7 +35,10 @@ fn settings_path(base_dir: &Path) -> PathBuf {
 pub fn load_settings(base_dir: &Path) -> AppSettings {
     let path = settings_path(base_dir);
     match std::fs::read_to_string(&path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "settings.json invalid; using defaults");
+            AppSettings::default()
+        }),
         Err(_) => AppSettings::default(),
     }
 }
@@ -78,6 +81,10 @@ pub async fn set_active_config(
     name: String,
 ) -> Result<(), AppError> {
     let mgr = mgr.lock().await;
+    let path = crate::config::config_path(&mgr.base_dir, &name)?;
+    if !path.exists() {
+        return Err(AppError::Config(format!("config '{name}' not found")));
+    }
     let mut settings = load_settings(&mgr.base_dir);
     settings.active_config = name;
     save_settings(&mgr.base_dir, &settings)

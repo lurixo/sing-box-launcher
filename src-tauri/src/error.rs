@@ -20,6 +20,9 @@ pub enum AppError {
     #[error("Clash API error: {0}")]
     ClashApi(String),
 
+    #[error("Update error: {0}")]
+    Update(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

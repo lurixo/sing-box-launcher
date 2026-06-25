@@ -42,7 +42,7 @@ pub fn ensure_configs_dir(base_dir: &Path) {
 }
 
 /// Validate and resolve config file path.
-fn config_path(base_dir: &Path, name: &str) -> Result<PathBuf, AppError> {
+pub fn config_path(base_dir: &Path, name: &str) -> Result<PathBuf, AppError> {
     if name.is_empty()
         || !name
             .chars()
@@ -62,7 +62,7 @@ pub fn prepare_runtime_config(base_dir: &Path, config_name: &str) -> Result<Conf
     let mut config: Value =
         serde_json::from_str(&raw).map_err(|e| AppError::Config(format!("parse config: {e}")))?;
 
-    let (api_address, api_secret) = inject_clash_api(&mut config);
+    let (api_address, api_secret) = inject_clash_api(&mut config)?;
     let proxy_server = extract_proxy_server(&config);
 
     let runtime_path = base_dir.join("config_runtime.json");
@@ -160,8 +160,7 @@ pub async fn create_config(
     if path.exists() {
         return Err(AppError::Config(format!("config '{name}' already exists")));
     }
-    // Create empty config — user fills content via the editor
-    std::fs::write(&path, "")
+    std::fs::write(&path, MINIMAL_CONFIG)
         .map_err(|e| AppError::Config(format!("create {name}.json: {e}")))?;
     info!(name = %name, "new config created");
     Ok(())
@@ -220,23 +219,48 @@ pub async fn rename_config(
 
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
+const MINIMAL_CONFIG: &str = r#"{
+  "log": {
+    "level": "info"
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ]
+}
+"#;
+
+/// Ensure `key` in `parent` is an object, replacing any non-object value.
+fn ensure_object<'a>(parent: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Value> {
+    let slot = parent
+        .entry(key)
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !slot.is_object() {
+        *slot = Value::Object(Map::new());
+    }
+    slot.as_object_mut().unwrap()
+}
+
 /// Ensure `experimental.clash_api.external_controller` exists.
-fn inject_clash_api(config: &mut Value) -> (String, String) {
+fn inject_clash_api(config: &mut Value) -> Result<(String, String), AppError> {
     const DEFAULT_ADDR: &str = "127.0.0.1:9090";
 
-    let obj = config.as_object_mut().expect("config must be an object");
-
-    let experimental = obj
-        .entry("experimental")
-        .or_insert_with(|| Value::Object(Map::new()))
+    let obj = config
         .as_object_mut()
-        .unwrap();
+        .ok_or_else(|| AppError::Config("config root must be a JSON object".into()))?;
 
-    let clash_api = experimental
-        .entry("clash_api")
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .unwrap();
+    let experimental = ensure_object(obj, "experimental");
+    let clash_api = ensure_object(experimental, "clash_api");
 
     let addr = match clash_api.get("external_controller").and_then(|v| v.as_str()) {
         Some(a) if !a.is_empty() => a.to_string(),
@@ -255,18 +279,13 @@ fn inject_clash_api(config: &mut Value) -> (String, String) {
         .unwrap_or("")
         .to_string();
 
-    let cache_file = experimental
-        .entry("cache_file")
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .unwrap();
-
+    let cache_file = ensure_object(experimental, "cache_file");
     cache_file.entry("enabled").or_insert(Value::Bool(true));
     cache_file
         .entry("path")
         .or_insert_with(|| Value::String("cache.db".into()));
 
-    (addr, secret)
+    Ok((addr, secret))
 }
 
 /// Find the first HTTP/SOCKS/mixed inbound -> "host:port"
