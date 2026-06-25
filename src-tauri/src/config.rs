@@ -386,7 +386,7 @@ fn inject_log_level(config: &mut Value, level: &str) {
 /// Generate a random 128-bit hex token for the native API secret.
 fn generate_secret() -> String {
     let mut bytes = [0u8; 16];
-    if getrandom::getrandom(&mut bytes).is_err() {
+    if getrandom::fill(&mut bytes).is_err() {
         use sha2::{Digest, Sha256};
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
