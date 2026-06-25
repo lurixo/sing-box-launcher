@@ -3,6 +3,7 @@ mod accent;
 mod clash;
 mod config;
 mod core_update;
+mod elevation;
 mod error;
 mod groups;
 mod manager;
@@ -223,6 +224,12 @@ pub fn run() {
     let silent = app_settings.silent_start;
     dlog(&dl, &format!("silent_start = {silent}"));
 
+    // Relaunch elevated (UAC) before building the app so the core can use TUN
+    if elevation::should_exit_for_elevation(app_settings.run_as_admin) {
+        dlog(&dl, "relaunching elevated; exiting unelevated instance");
+        std::process::exit(0);
+    }
+
     let mgr = manager::new_manager(base_dir);
     let grp = groups::new_groups();
 
@@ -256,10 +263,12 @@ pub fn run() {
             settings::get_settings,
             settings::set_silent_start,
             settings::set_active_config,
+            settings::set_run_as_admin,
             proxy::enable_uwp_loopback,
             core_update::get_core_info,
             core_update::check_core_update,
             core_update::update_core,
+            elevation::is_admin,
         ])
         .setup(move |app| {
             dlog(&dl_setup, "setup: entering closure");

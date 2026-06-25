@@ -87,6 +87,10 @@ export function Settings() {
   const [silentStart, setSilentStart] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(true);
 
+  // ─── Elevation state ─────────────────────────────────────────────
+  const [runAsAdmin, setRunAsAdmin] = useState(true);
+  const [elevated, setElevated] = useState(true);
+
   // ─── UWP state ───────────────────────────────────────────────────
   const [uwpLoading, setUwpLoading] = useState(false);
   const [uwpResult, setUwpResult] = useState<string | null>(null);
@@ -113,12 +117,23 @@ export function Settings() {
         setAutostart(enabled);
         const settings = await invoke<AppSettings>("get_settings");
         setSilentStart(settings.silent_start);
+        setRunAsAdmin(settings.run_as_admin);
+        setElevated(await invoke<boolean>("is_admin"));
       } catch (e) {
         setGenErr(String(e));
       }
       setAutostartLoading(false);
     })();
   }, []);
+
+  const handleRunAsAdminToggle = async (val: boolean) => {
+    try {
+      await invoke("set_run_as_admin", { enabled: val });
+      setRunAsAdmin(val);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
 
   // Load version + core info, listen for update progress
   useEffect(() => {
@@ -231,6 +246,23 @@ export function Settings() {
       {/* ─── General ─── */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>General</div>
+
+        {/* Run as administrator */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>Run as administrator</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+              Required for TUN mode; relaunches with a UAC prompt on next start
+            </div>
+          </div>
+          <ToggleSwitch checked={runAsAdmin} onChange={handleRunAsAdminToggle} />
+        </div>
+
+        {runAsAdmin && !elevated && (
+          <div className="infobar" style={{ marginTop: 4, marginBottom: 4, background: "var(--status-warning-bg)", borderColor: "var(--status-warning)" }}>
+            Not running as administrator. The core may fail to start a TUN inbound. Restart the app and approve the UAC prompt.
+          </div>
+        )}
 
         {/* Autostart */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
