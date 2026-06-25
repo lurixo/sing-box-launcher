@@ -67,9 +67,9 @@ function OutboundIpCard() {
     return () => clearTimeout(timer);
   }, [running, refresh]);
 
-  const copy = (text: string) => {
+  const copy = (key: string, text: string) => {
     navigator.clipboard?.writeText(text).then(() => {
-      setCopied(text);
+      setCopied(key);
       setTimeout(() => setCopied(null), 1200);
     }).catch(() => {});
   };
@@ -106,18 +106,18 @@ function OutboundIpCard() {
             <div key={info.ip} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
               <span style={{ fontSize: 18, flexShrink: 0 }}>{countryCodeToFlag(info.country)}</span>
               {info.asn && (
-                <button onClick={() => copy(info.asn)} title={info.asn} style={ipTokenStyle}>
+                <button onClick={() => copy(`${info.ip}:asn`, info.asn)} title={info.asn} style={ipTokenStyle}>
                   {info.asn}
                 </button>
               )}
               <button
-                onClick={() => copy(info.ip)}
+                onClick={() => copy(`${info.ip}:ip`, info.ip)}
                 title={info.ip}
                 style={{ ...ipTokenStyle, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" }}
               >
                 {info.ip}
               </button>
-              {(copied === info.ip || copied === info.asn) && (
+              {(copied === `${info.ip}:ip` || copied === `${info.ip}:asn`) && (
                 <span style={{ fontSize: 11, color: "var(--accent-default)", flexShrink: 0 }}>
                   {t("dashboard.copied")}
                 </span>

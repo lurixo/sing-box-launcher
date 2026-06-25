@@ -23,9 +23,11 @@ pub fn new_groups() -> Groups {
 impl GroupState {
     /// Fetch selector groups from the native API and cache them
     pub async fn load(&mut self, client: NativeClient) -> Result<Vec<ProxyGroup>, AppError> {
+        // Store the client up front so proxy control and outbound-IP lookups
+        // still work if the initial group snapshot times out on a slow core boot.
+        self.client = Some(client.clone());
         let groups = client.get_selector_groups().await?;
         self.groups = groups.clone();
-        self.client = Some(client);
         Ok(groups)
     }
 
