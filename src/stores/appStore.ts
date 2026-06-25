@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { applyThemeTokens, type ThemeMode } from "../lib/colorEngine";
+import type { Lang } from "../i18n/strings";
 import type {
   CoreStatus,
   ConfigInfo,
@@ -25,6 +26,10 @@ interface AppState {
   setAccentColor: (hex: string) => void;
   setAccentSource: (source: "system" | "manual") => void;
   fetchSystemAccent: () => Promise<void>;
+
+  // Language
+  lang: Lang;
+  setLang: (lang: Lang) => void;
 
   // Core status
   status: CoreStatus;
@@ -68,6 +73,7 @@ const STORAGE_THEME = "sb-theme";
 const STORAGE_ACCENT = "sb-accent";
 const STORAGE_ACCENT_SRC = "sb-accent-source";
 const STORAGE_GROUP = "sb-selected-group";
+const STORAGE_LANG = "sb-lang";
 const DEFAULT_ACCENT = "#0078D4";
 
 function load(key: string, fallback: string): string {
@@ -119,6 +125,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (source === "system") {
       get().fetchSystemAccent();
     }
+  },
+
+  // Language
+  lang: load(STORAGE_LANG, "zh-CN") as Lang,
+  setLang: (lang) => {
+    save(STORAGE_LANG, lang);
+    set({ lang });
   },
 
   fetchSystemAccent: async () => {

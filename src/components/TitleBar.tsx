@@ -6,11 +6,13 @@ import {
   SquareMultipleRegular,
 } from "@fluentui/react-icons";
 import { useState, useEffect } from "react";
+import { useT } from "../i18n/strings";
 
 const appWindow = getCurrentWindow();
 
 export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     const check = async () => setMaximized(await appWindow.isMaximized());
@@ -29,14 +31,14 @@ export function TitleBar() {
         <button
           className="titlebar-btn"
           onClick={() => appWindow.minimize()}
-          aria-label="Minimize"
+          aria-label={t("titlebar.minimize")}
         >
           <SubtractRegular style={{ fontSize: 16 }} />
         </button>
         <button
           className="titlebar-btn"
           onClick={() => appWindow.toggleMaximize()}
-          aria-label="Maximize"
+          aria-label={t("titlebar.maximize")}
         >
           {maximized ? (
             <SquareMultipleRegular style={{ fontSize: 16 }} />
@@ -47,7 +49,7 @@ export function TitleBar() {
         <button
           className="titlebar-btn close"
           onClick={() => appWindow.hide()}
-          aria-label="Close"
+          aria-label={t("titlebar.close")}
         >
           <DismissRegular style={{ fontSize: 16 }} />
         </button>

@@ -22,6 +22,7 @@ import {
 import { useAppStore } from "../stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
 import { useReveal } from "../hooks/useReveal";
+import { useT } from "../i18n/strings";
 import type { ConfigEntry } from "../types";
 
 function formatUptime(secs: number): string {
@@ -37,6 +38,7 @@ function formatUptime(secs: number): string {
 export function Dashboard() {
   const { status, loading, error, startCore, stopCore, restartCore, toggleProxy, clearError } =
     useAppStore();
+  const t = useT();
 
   const revealRef = useReveal<HTMLDivElement>();
 
@@ -99,7 +101,7 @@ export function Dashboard() {
     try {
       await invoke("save_config", { name: editingName, content: configText });
       setConfigDirty(false);
-      setConfigMsg({ type: "ok", text: "Saved. Restart core to apply changes." });
+      setConfigMsg({ type: "ok", text: t("dashboard.savedMsg") });
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
@@ -110,7 +112,7 @@ export function Dashboard() {
     try {
       await invoke("set_active_config", { name });
       await loadConfigList();
-      setConfigMsg({ type: "ok", text: `'${name}' is now the active config.` });
+      setConfigMsg({ type: "ok", text: t("dashboard.activeMsg", { name }) });
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
@@ -133,7 +135,7 @@ export function Dashboard() {
   const handleDelete = async (name: string) => {
     const active = configs.find((c) => c.active);
     if (active?.name === name) {
-      setConfigMsg({ type: "err", text: "Cannot delete the active config." });
+      setConfigMsg({ type: "err", text: t("dashboard.cannotDeleteActive") });
       return;
     }
     try {
@@ -172,7 +174,7 @@ export function Dashboard() {
       try {
         JSON.parse(text);
       } catch {
-        setConfigMsg({ type: "err", text: "Invalid JSON file" });
+        setConfigMsg({ type: "err", text: t("dashboard.invalidJson") });
         return;
       }
       const baseName = file.name.replace(/\.json$/i, "").replace(/[^a-zA-Z0-9_-]/g, "_") || "imported";
@@ -180,7 +182,7 @@ export function Dashboard() {
         await invoke("save_config", { name: baseName, content: text });
         await loadConfigList();
         openEditor(baseName);
-        setConfigMsg({ type: "ok", text: `Imported as '${baseName}'.` });
+        setConfigMsg({ type: "ok", text: t("dashboard.importedMsg", { name: baseName }) });
       } catch (e) {
         setConfigMsg({ type: "err", text: String(e) });
       }
@@ -203,7 +205,7 @@ export function Dashboard() {
       style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 20 }}
     >
       <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
-        Dashboard
+        {t("dashboard.title")}
       </h1>
 
       {error && (
@@ -214,7 +216,7 @@ export function Dashboard() {
             onClick={clearError}
             style={{ padding: "2px 8px", minHeight: 24, fontSize: 12 }}
           >
-            Dismiss
+            {t("common.dismiss")}
           </button>
         </div>
       )}
@@ -224,7 +226,7 @@ export function Dashboard() {
         <div className="fluent-card reveal-target" style={{ padding: "16px 18px" }}>
           <div className="card-header">
             <ServerRegular style={{ fontSize: 16 }} />
-            Status
+            {t("dashboard.status")}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span
@@ -234,8 +236,8 @@ export function Dashboard() {
             />
             <span style={{ fontSize: 18, fontWeight: 600 }}>
               {status.running
-                ? status.proxy_enabled ? "Proxy Active" : "Running"
-                : "Stopped"}
+                ? status.proxy_enabled ? t("dashboard.status.proxyActive") : t("dashboard.status.running")
+                : t("dashboard.status.stopped")}
             </span>
           </div>
         </div>
@@ -243,7 +245,7 @@ export function Dashboard() {
         <div className="fluent-card reveal-target" style={{ padding: "16px 18px" }}>
           <div className="card-header">
             <TimerRegular style={{ fontSize: 16 }} />
-            Uptime
+            {t("dashboard.uptime")}
           </div>
           <div style={{ fontSize: 18, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
             {formatUptime(uptime)}
@@ -253,7 +255,7 @@ export function Dashboard() {
         <div className="fluent-card reveal-target" style={{ padding: "16px 18px" }}>
           <div className="card-header">
             <PlugConnectedRegular style={{ fontSize: 16 }} />
-            Connection
+            {t("dashboard.connection")}
           </div>
           <div
             style={{
@@ -262,29 +264,29 @@ export function Dashboard() {
               fontVariantNumeric: "tabular-nums",
             }}
           >
-            {status.running ? status.proxy_server || "N/A" : "—"}
+            {status.running ? status.proxy_server || t("common.na") : "—"}
           </div>
         </div>
       </div>
 
       {/* Controls */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
-        <div className="section-label" style={{ marginBottom: 14 }}>Controls</div>
+        <div className="section-label" style={{ marginBottom: 14 }}>{t("dashboard.controls")}</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {!status.running ? (
             <button className="fluent-btn accent reveal-target" onClick={startCore} disabled={loading}>
               {loading ? <span className="progress-ring" style={{ width: 16, height: 16, borderWidth: 2 }} /> : <PlayRegular style={{ fontSize: 16 }} />}
-              Start
+              {t("dashboard.start")}
             </button>
           ) : (
             <>
               <button className="fluent-btn reveal-target" onClick={stopCore} disabled={loading}>
                 {loading ? <span className="progress-ring" style={{ width: 16, height: 16, borderWidth: 2 }} /> : <StopRegular style={{ fontSize: 16 }} />}
-                Stop
+                {t("dashboard.stop")}
               </button>
               <button className="fluent-btn reveal-target" onClick={restartCore} disabled={loading}>
                 <ArrowSyncRegular style={{ fontSize: 16 }} />
-                Restart
+                {t("dashboard.restart")}
               </button>
             </>
           )}
@@ -294,11 +296,11 @@ export function Dashboard() {
             disabled={!status.running || loading}
           >
             <ShieldCheckmarkRegular style={{ fontSize: 16 }} />
-            System Proxy {status.proxy_enabled ? "ON" : "OFF"}
+            {status.proxy_enabled ? t("dashboard.systemProxyOn") : t("dashboard.systemProxyOff")}
           </button>
           <button className="fluent-btn reveal-target" onClick={() => invoke("open_base_dir")} style={{ marginLeft: "auto" }}>
             <FolderOpenRegular style={{ fontSize: 16 }} />
-            Open Directory
+            {t("dashboard.openDirectory")}
           </button>
         </div>
       </div>
@@ -315,7 +317,7 @@ export function Dashboard() {
           }}
         >
           <DocumentRegular style={{ fontSize: 18 }} />
-          Configuration
+          {t("dashboard.configuration")}
           <span style={{ marginLeft: "auto", display: "flex", color: "var(--text-tertiary)" }}>
             {configExpanded ? <ChevronUpRegular /> : <ChevronDownRegular />}
           </span>
@@ -348,14 +350,14 @@ export function Dashboard() {
                     style={{ fontSize: 12, minHeight: 28, padding: "4px 10px" }}
                   >
                     <ArrowLeftRegular style={{ fontSize: 14 }} />
-                    Back
+                    {t("common.back")}
                   </button>
                   <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
                     {editingName}
                   </span>
                   {isEditingActive && (
                     <span style={{ fontSize: 11, color: "var(--accent-default)", fontWeight: 600 }}>
-                      ✦ Active
+                      ✦ {t("dashboard.active")}
                     </span>
                   )}
                 </div>
@@ -365,11 +367,11 @@ export function Dashboard() {
                   {!isEditingActive && (
                     <button className="fluent-btn accent reveal-target" onClick={() => handleSetActive(editingName)} style={{ fontSize: 13 }}>
                       <CheckmarkCircleRegular style={{ fontSize: 16 }} />
-                      Set Active
+                      {t("dashboard.setActive")}
                     </button>
                   )}
                   <button className="fluent-btn reveal-target" onClick={() => openEditor(editingName)} style={{ fontSize: 13 }}>
-                    Reload
+                    {t("common.reload")}
                   </button>
                   <button
                     className="fluent-btn reveal-target"
@@ -377,12 +379,12 @@ export function Dashboard() {
                     style={{ fontSize: 13 }}
                   >
                     <EditRegular style={{ fontSize: 16 }} />
-                    Rename
+                    {t("common.rename")}
                   </button>
                   {!isEditingActive && (
                     <button className="fluent-btn reveal-target" onClick={() => handleDelete(editingName)} style={{ fontSize: 13, color: "var(--status-danger)" }}>
                       <DeleteRegular style={{ fontSize: 16 }} />
-                      Delete
+                      {t("common.delete")}
                     </button>
                   )}
                   <button
@@ -392,7 +394,7 @@ export function Dashboard() {
                     style={{ fontSize: 13, marginLeft: "auto" }}
                   >
                     {configSaving ? <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <SaveRegular style={{ fontSize: 16 }} />}
-                    Save
+                    {t("common.save")}
                   </button>
                 </div>
 
@@ -411,10 +413,10 @@ export function Dashboard() {
                       }}
                     />
                     <button className="fluent-btn accent reveal-target" onClick={() => handleRename(editingName)} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>
-                      Confirm
+                      {t("common.confirm")}
                     </button>
                     <button className="fluent-btn reveal-target" onClick={() => setRenamingName(null)} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>
-                      Cancel
+                      {t("common.cancel")}
                     </button>
                   </div>
                 )}
@@ -424,7 +426,7 @@ export function Dashboard() {
                   value={configText}
                   onChange={(e) => { setConfigText(e.target.value); setConfigDirty(true); setConfigMsg(null); }}
                   spellCheck={false}
-                  placeholder="Paste your sing-box config JSON here..."
+                  placeholder={t("dashboard.editorPlaceholder")}
                   style={{
                     width: "100%", height: 300, resize: "vertical",
                     fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
@@ -438,7 +440,7 @@ export function Dashboard() {
                 />
 
                 <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                  Paste config JSON or import from file. Save and restart core to apply.
+                  {t("dashboard.editorHint")}
                 </div>
               </div>
 
@@ -454,25 +456,25 @@ export function Dashboard() {
                         value={newName}
                         onChange={(e) => setNewName(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
-                        placeholder="Config name"
+                        placeholder={t("dashboard.configName")}
                         style={{
                           border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
                           padding: "4px 10px", fontSize: 13, background: "var(--bg-surface)",
                           color: "var(--text-primary)", outline: "none", width: 160, height: 30, fontFamily: "inherit",
                         }}
                       />
-                      <button className="fluent-btn accent reveal-target" onClick={handleCreate} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>Create</button>
-                      <button className="fluent-btn reveal-target" onClick={() => setCreating(false)} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>Cancel</button>
+                      <button className="fluent-btn accent reveal-target" onClick={handleCreate} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>{t("common.create")}</button>
+                      <button className="fluent-btn reveal-target" onClick={() => setCreating(false)} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>{t("common.cancel")}</button>
                     </div>
                   ) : (
                     <>
                       <button className="fluent-btn reveal-target" onClick={() => { setCreating(true); setNewName(""); }} style={{ fontSize: 13 }}>
                         <AddRegular style={{ fontSize: 16 }} />
-                        New
+                        {t("dashboard.new")}
                       </button>
                       <button className="fluent-btn reveal-target" onClick={handleImportFile} style={{ fontSize: 13 }}>
                         <ArrowImportRegular style={{ fontSize: 16 }} />
-                        Import
+                        {t("dashboard.import")}
                       </button>
                     </>
                   )}
@@ -481,7 +483,7 @@ export function Dashboard() {
                 {/* Config list */}
                 {configs.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "28px 0", color: "var(--text-tertiary)", fontSize: 13 }}>
-                    No configs yet. Click <strong>New</strong> to create or <strong>Import</strong> a file.
+                    {t("dashboard.noConfigs")}
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -515,7 +517,7 @@ export function Dashboard() {
                                   color: "var(--text-primary)", outline: "none", flex: 1, fontFamily: "inherit",
                                 }}
                               />
-                              <button className="fluent-btn accent" onClick={(e) => { e.stopPropagation(); handleRename(c.name); }} style={{ fontSize: 11, minHeight: 24, padding: "2px 8px" }}>OK</button>
+                              <button className="fluent-btn accent" onClick={(e) => { e.stopPropagation(); handleRename(c.name); }} style={{ fontSize: 11, minHeight: 24, padding: "2px 8px" }}>{t("common.confirm")}</button>
                               <button className="fluent-btn" onClick={(e) => { e.stopPropagation(); setRenamingName(null); }} style={{ fontSize: 11, minHeight: 24, padding: "2px 8px" }}>✕</button>
                             </div>
                           ) : (
@@ -527,7 +529,7 @@ export function Dashboard() {
                         {c.active && (
                           <span style={{ fontSize: 11, color: "var(--accent-default)", fontWeight: 600, whiteSpace: "nowrap" }}>
                             <CheckmarkCircleRegular style={{ fontSize: 13, marginRight: 3, verticalAlign: "middle" }} />
-                            Active
+                            {t("dashboard.active")}
                           </span>
                         )}
                         {/* Action buttons */}
@@ -536,7 +538,7 @@ export function Dashboard() {
                             className="fluent-btn reveal-target"
                             onClick={() => { setRenamingName(c.name); setRenameInput(c.name); }}
                             style={{ fontSize: 11, minHeight: 26, padding: "2px 6px" }}
-                            title="Rename"
+                            title={t("common.rename")}
                           >
                             <EditRegular style={{ fontSize: 13 }} />
                           </button>
@@ -546,7 +548,7 @@ export function Dashboard() {
                                 className="fluent-btn reveal-target"
                                 onClick={() => handleSetActive(c.name)}
                                 style={{ fontSize: 11, minHeight: 26, padding: "2px 6px" }}
-                                title="Set as active config"
+                                title={t("dashboard.setActive")}
                               >
                                 <CheckmarkCircleRegular style={{ fontSize: 13 }} />
                               </button>
@@ -554,7 +556,7 @@ export function Dashboard() {
                                 className="fluent-btn reveal-target"
                                 onClick={() => handleDelete(c.name)}
                                 style={{ fontSize: 11, minHeight: 26, padding: "2px 6px", color: "var(--status-danger)" }}
-                                title="Delete"
+                                title={t("common.delete")}
                               >
                                 <DeleteRegular style={{ fontSize: 13 }} />
                               </button>
@@ -578,8 +580,8 @@ export function Dashboard() {
           padding: "4px 0", borderTop: "1px solid var(--border-divider)", paddingTop: 12,
         }}
       >
-        <span>Proxy: <code style={{ color: "var(--text-primary)" }}>{status.proxy_server || "—"}</code></span>
-        <span>API: <code style={{ color: "var(--text-primary)" }}>{status.api_address || "—"}</code></span>
+        <span>{t("dashboard.proxyLabel")} <code style={{ color: "var(--text-primary)" }}>{status.proxy_server || "—"}</code></span>
+        <span>{t("dashboard.apiLabel")} <code style={{ color: "var(--text-primary)" }}>{status.api_address || "—"}</code></span>
       </div>
     </div>
   );

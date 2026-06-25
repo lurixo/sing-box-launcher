@@ -5,12 +5,13 @@ import {
   NavigationRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
+import { useT, type TranslationKey } from "../i18n/strings";
 import type { Page } from "../types";
 
-const navItems: { id: Page; icon: React.ReactNode; label: string }[] = [
-  { id: "dashboard", icon: <BoardRegular />, label: "Dashboard" },
-  { id: "proxies", icon: <GlobeRegular />, label: "Proxies" },
-  { id: "settings", icon: <SettingsRegular />, label: "Settings" },
+const navItems: { id: Page; icon: React.ReactNode; key: TranslationKey }[] = [
+  { id: "dashboard", icon: <BoardRegular />, key: "nav.dashboard" },
+  { id: "proxies", icon: <GlobeRegular />, key: "nav.proxies" },
+  { id: "settings", icon: <SettingsRegular />, key: "nav.settings" },
 ];
 
 export function Sidebar() {
@@ -18,6 +19,7 @@ export function Sidebar() {
   const setPage = useAppStore((s) => s.setPage);
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
+  const t = useT();
 
   return (
     <nav
@@ -37,10 +39,10 @@ export function Sidebar() {
         className="nav-item"
         onClick={toggleSidebar}
         style={{ marginBottom: 8, gap: collapsed ? 0 : 12 }}
-        aria-label="Toggle sidebar"
+        aria-label={t("nav.menu")}
       >
         <NavigationRegular style={{ fontSize: 20, flexShrink: 0 }} />
-        {!collapsed && <span>Menu</span>}
+        {!collapsed && <span>{t("nav.menu")}</span>}
       </button>
 
       {navItems.map((item) => (
@@ -49,12 +51,12 @@ export function Sidebar() {
           className={`nav-item ${page === item.id ? "active" : ""}`}
           onClick={() => setPage(item.id)}
           style={{ gap: collapsed ? 0 : 12 }}
-          aria-label={item.label}
+          aria-label={t(item.key)}
         >
           <span style={{ fontSize: 20, flexShrink: 0, display: "flex" }}>
             {item.icon}
           </span>
-          {!collapsed && <span>{item.label}</span>}
+          {!collapsed && <span>{t(item.key)}</span>}
         </button>
       ))}
     </nav>
