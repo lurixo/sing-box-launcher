@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type CSSProperties } from "react";
 import {
   PlayRegular,
   StopRegular,
@@ -7,6 +7,7 @@ import {
   TimerRegular,
   ServerRegular,
   PlugConnectedRegular,
+  GlobeRegular,
   FolderOpenRegular,
   DocumentRegular,
   ArrowImportRegular,
@@ -24,7 +25,110 @@ import { useAppStore } from "../stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
-import type { ConfigEntry, CheckResult } from "../types";
+import type { ConfigEntry, CheckResult, OutboundIpInfo } from "../types";
+
+const ipTokenStyle: CSSProperties = {
+  fontFamily: "monospace", fontSize: 13, fontWeight: 500,
+  background: "var(--bg-card)", border: "1px solid var(--border-card)",
+  borderRadius: 6, padding: "2px 8px", color: "var(--text-primary)",
+  cursor: "pointer", whiteSpace: "nowrap", maxWidth: "100%",
+};
+
+function countryCodeToFlag(cc: string): string {
+  if (!/^[a-zA-Z]{2}$/.test(cc)) return "🏳️";
+  const u = cc.toUpperCase();
+  return (
+    String.fromCodePoint(0x1f1e6 + u.charCodeAt(0) - 65) +
+    String.fromCodePoint(0x1f1e6 + u.charCodeAt(1) - 65)
+  );
+}
+
+function OutboundIpCard() {
+  const running = useAppStore((s) => s.status.running);
+  const t = useT();
+  const [lines, setLines] = useState<OutboundIpInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!running) { setLines([]); return; }
+    setLoading(true);
+    try {
+      setLines(await invoke<OutboundIpInfo[]>("get_outbound_ip"));
+    } catch {
+      setLines([]);
+    }
+    setLoading(false);
+  }, [running]);
+
+  useEffect(() => {
+    if (!running) { setLines([]); return; }
+    const timer = setTimeout(refresh, 800);
+    return () => clearTimeout(timer);
+  }, [running, refresh]);
+
+  const copy = (text: string) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(text);
+      setTimeout(() => setCopied(null), 1200);
+    }).catch(() => {});
+  };
+
+  return (
+    <div className="fluent-card reveal-target" style={{ padding: "16px 18px" }}>
+      <div className="card-header" style={{ display: "flex", alignItems: "center" }}>
+        <GlobeRegular style={{ fontSize: 16 }} />
+        {t("dashboard.outboundIp")}
+        <button
+          className="fluent-btn reveal-target"
+          onClick={refresh}
+          disabled={!running || loading}
+          title={t("dashboard.refresh")}
+          aria-label={t("dashboard.refresh")}
+          style={{ marginLeft: "auto", minHeight: 26, padding: "2px 8px", fontSize: 11 }}
+        >
+          {loading ? (
+            <span className="progress-ring" style={{ width: 12, height: 12, borderWidth: 2 }} />
+          ) : (
+            <ArrowSyncRegular style={{ fontSize: 14 }} />
+          )}
+        </button>
+      </div>
+      {!running ? (
+        <div style={{ fontSize: 14, color: "var(--text-tertiary)" }}>—</div>
+      ) : lines.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
+          {loading ? "…" : t("dashboard.ipUnknown")}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {lines.map((info) => (
+            <div key={info.ip} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <span style={{ fontSize: 18, flexShrink: 0 }}>{countryCodeToFlag(info.country)}</span>
+              {info.asn && (
+                <button onClick={() => copy(info.asn)} title={info.asn} style={ipTokenStyle}>
+                  {info.asn}
+                </button>
+              )}
+              <button
+                onClick={() => copy(info.ip)}
+                title={info.ip}
+                style={{ ...ipTokenStyle, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" }}
+              >
+                {info.ip}
+              </button>
+              {(copied === info.ip || copied === info.asn) && (
+                <span style={{ fontSize: 11, color: "var(--accent-default)", flexShrink: 0 }}>
+                  {t("dashboard.copied")}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function formatUptime(secs: number): string {
   if (secs === 0) return "—";
@@ -291,6 +395,9 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Outbound IP */}
+      <OutboundIpCard />
 
       {/* Controls */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>

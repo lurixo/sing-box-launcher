@@ -54,6 +54,10 @@ export const en = {
   "dashboard.importedMsg": "Imported as '{name}'.",
   "dashboard.proxyLabel": "Proxy:",
   "dashboard.apiLabel": "API:",
+  "dashboard.outboundIp": "Outbound IP",
+  "dashboard.refresh": "Refresh",
+  "dashboard.ipUnknown": "Unknown",
+  "dashboard.copied": "Copied",
 
   "proxies.title": "Proxies",
   "proxies.startToView": "Start the core to view proxy groups.",
@@ -177,6 +181,10 @@ export const zhCN: Record<TranslationKey, string> = {
   "dashboard.importedMsg": "已导入为「{name}」。",
   "dashboard.proxyLabel": "代理：",
   "dashboard.apiLabel": "API：",
+  "dashboard.outboundIp": "出站 IP",
+  "dashboard.refresh": "刷新",
+  "dashboard.ipUnknown": "未知",
+  "dashboard.copied": "已复制",
 
   "proxies.title": "代理",
   "proxies.startToView": "启动内核以查看代理组。",

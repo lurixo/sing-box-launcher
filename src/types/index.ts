@@ -35,6 +35,12 @@ export interface LogLine {
   ts: number;
 }
 
+export interface OutboundIpInfo {
+  ip: string;
+  country: string;
+  asn: string;
+}
+
 export interface ConfigEntry {
   name: string;
   active: boolean;

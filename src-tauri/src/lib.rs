@@ -198,6 +198,19 @@ async fn test_group_delay(
 }
 
 #[tauri::command]
+async fn get_outbound_ip(
+    grp: tauri::State<'_, groups::Groups>,
+) -> Result<Vec<native_api::OutboundIpInfo>, AppError> {
+    let client = {
+        let grp = grp.lock().await;
+        grp.client
+            .clone()
+            .ok_or_else(|| AppError::ClashApi("not connected".into()))?
+    };
+    client.get_outbound_ip().await
+}
+
+#[tauri::command]
 async fn open_base_dir(mgr: tauri::State<'_, manager::Manager>) -> Result<(), AppError> {
     let mgr = mgr.lock().await;
     let dir = mgr.base_dir.clone();
@@ -268,6 +281,7 @@ pub fn run() {
             get_proxy_groups,
             switch_proxy,
             test_group_delay,
+            get_outbound_ip,
             open_base_dir,
             accent::get_system_accent,
             config::list_configs,
