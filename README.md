@@ -4,11 +4,16 @@ A lightweight Windows GUI for managing the [sing-box](https://sing-box.sagernet.
 
 ## Features
 
+- **Portable** — Single self-contained folder, no installer; all data lives next to the executable
+- **Bundled Core** — The `sing-box.exe` core is packaged with each build
+- **Core Updates** — Check for and download newer cores from [sing-box-releases](https://github.com/lurixo/sing-box-releases/releases) in-app
 - **Core Management** — Start, stop, and restart the sing-box process with automatic config injection
+- **Config Profiles** — Manage multiple named configs (create, edit, import, rename, delete, set active)
 - **System Proxy** — Toggle Windows system proxy via registry with one click
 - **Proxy Groups** — View and switch Selector-type proxy groups, test node latency
 - **System Tray** — Minimize to tray with color-coded status icons (gray/green/blue)
-- **Fluent UI** — Windows 11 native look with Mica/Acrylic effects, light/dark theme support
+- **Autostart** — Launch at login, with optional silent start to tray
+- **Fluent UI** — Windows 11 native look with light/dark theme and dynamic accent color
 
 ## Screenshots
 
@@ -22,7 +27,7 @@ The app features three main panels:
 | Tool | Version | Notes |
 |------|---------|-------|
 | **Rust** | stable (1.85+) | `rustup default stable` |
-| **Node.js** | 24.x LTS | [nodejs.org](https://nodejs.org/) |
+| **Node.js** | 22.x LTS | [nodejs.org](https://nodejs.org/) |
 | **Tauri CLI** | 2.x | Installed via npm devDependency |
 
 ### Windows-specific
@@ -42,21 +47,25 @@ npm install
 # Run in development mode
 npm run tauri dev
 
-# Build for production
-npm run tauri build
+# Build a portable package (no installer)
+npx tauri build --no-bundle
 ```
 
-### sing-box setup
+A production build is produced by CI as `sing-box-launcher-portable.zip`: a folder
+containing `sing-box-launcher.exe`, the bundled `sing-box.exe` core,
+`EnableLoopback.exe`, and `singbox-build-info.json`. Unzip it anywhere and run —
+no installation required. (Requires the Microsoft Edge WebView2 runtime, present
+on Windows 11 and most Windows 10 systems.)
 
-Place the following files in the same directory as the built executable:
+### Configs and the core
 
-1. `sing-box.exe` — The sing-box binary
-2. `config.json` — Your sing-box configuration
-
-The launcher will:
-- Read `config.json` and inject `clash_api` settings for proxy group management
-- Write `config_runtime.json` (the original `config.json` is never modified)
-- Start `sing-box.exe run -c config_runtime.json`
+- The core (`sing-box.exe`) ships bundled. Use **Settings → Core** to check for and
+  download a newer build from [sing-box-releases](https://github.com/lurixo/sing-box-releases/releases).
+- Configs are named profiles stored under `configs/<name>.json`. Create, edit, or
+  import them from the Dashboard; select the active one to run.
+- On start, the launcher reads the active config, injects `clash_api`/`cache_file`
+  settings, writes `config_runtime.json` (the original is never modified), and runs
+  `sing-box.exe run -c config_runtime.json -D <base_dir>`.
 
 ## Project Structure
 
@@ -84,9 +93,12 @@ sing-box-launcher/
 │   │   ├── lib.rs              # Tauri setup & IPC commands
 │   │   ├── manager.rs          # sing-box process lifecycle
 │   │   ├── config.rs           # Config parsing & injection
+│   │   ├── core_update.rs      # Core bundling & in-app updates
 │   │   ├── proxy.rs            # Windows system proxy (registry + WinINet)
 │   │   ├── clash.rs            # Clash API HTTP client
 │   │   ├── groups.rs           # Proxy group state
+│   │   ├── settings.rs         # App settings & config profiles
+│   │   ├── accent.rs           # Windows accent color
 │   │   ├── tray.rs             # System tray icon & menu
 │   │   └── error.rs            # Unified error types
 │   ├── Cargo.toml
@@ -114,6 +126,16 @@ sing-box-launcher/
 | `switch_proxy` | `(group, node) → ()` | Switch selected node in a group |
 | `test_group_delay` | `(group) → {name: delay}` | Test latency for all nodes |
 | `open_base_dir` | `() → ()` | Open exe directory in Explorer |
+| `list_configs` / `get_config` | `() → ConfigEntry[]` / `(name) → string` | List/read config profiles |
+| `save_config` / `create_config` | `(name, content) → ()` / `(name) → ()` | Save or create a config profile |
+| `delete_config` / `rename_config` | `(name) → ()` / `(old, new) → ()` | Delete or rename a config profile |
+| `get_settings` / `set_silent_start` | `() → AppSettings` / `(enabled) → ()` | Read settings / toggle silent start |
+| `set_active_config` | `(name) → ()` | Select the active config profile |
+| `get_system_accent` | `() → string` | Windows accent color as hex |
+| `enable_uwp_loopback` | `() → string` | Launch the UWP loopback exemption tool |
+| `get_core_info` | `() → CoreInfo` | Installed core presence and build info |
+| `check_core_update` | `() → CoreUpdateCheck` | Compare installed core against latest |
+| `update_core` | `() → BuildInfo` | Download, verify, and install the latest core |
 
 ## CI/CD
 
@@ -121,9 +143,10 @@ sing-box-launcher/
 
 The `build.yml` workflow:
 - Builds on `windows-latest`
-- Installs Rust stable + Node.js 24.x
-- Runs `npm install` + `npm run tauri build`
-- Uploads `.msi` and `.exe` installers as artifacts (7-day retention)
+- Installs Rust stable + Node.js 22.x
+- Downloads the latest `sing-box.exe` core per `singbox-build-info.json` (sha256-verified)
+- Runs `npx tauri build --no-bundle`
+- Assembles and uploads `sing-box-launcher-portable.zip` (7-day retention)
 
 ### Release (on version tag)
 
@@ -136,9 +159,9 @@ git push origin v1.0.0
 ```
 
 The `release.yml` workflow will:
-- Build the application
+- Build the application and bundle the core
 - Create a GitHub Release titled "sing-box-launcher v1.0.0"
-- Upload `.msi` and `.exe` installers as release assets
+- Upload the portable `.zip` as a release asset
 - Auto-generate changelog from commits since the last tag
 
 ## Tech Stack
@@ -150,8 +173,10 @@ The `release.yml` workflow will:
 - **anyhow** 1.0 — Application error handling
 - **urlencoding** 2.1 — URL percent-encoding
 - **tokio** ~1.47 LTS — Async runtime
-- **reqwest** 0.13 — HTTP client (Clash API)
+- **reqwest** 0.13 — HTTP client (Clash API, core downloads)
 - **serde/serde_json** 1.0 — Serialization
+- **zip** 8 — Core archive extraction
+- **sha2** 0.10 — Core download verification
 - **winreg** 0.56 — Windows Registry
 - **windows** 0.61 — Win32 API (WinINet)
 - **tracing** 0.1 — Structured logging
