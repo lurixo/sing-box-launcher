@@ -154,31 +154,33 @@ function Uptime() {
   );
 }
 
-// ─── Live traffic chart (hand-rolled SVG, memoized, stable y-scale) ──────────
-function niceCeil(v: number): number {
-  if (v <= 0) return 1;
-  const pow = Math.pow(10, Math.floor(Math.log10(v)));
-  const n = v / pow;
-  const m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
-  return m * pow;
-}
+// ─── Live traffic chart (hand-rolled SVG, memoized, shared Y, smoothed scale) ─
+const MAX_SAMPLES = 60; // ~1 min window at 1 Hz
+const SCALE_FLOOR = 1024; // 1 KB/s floor → idle scale stays put (no flicker)
+const FALL_RATE = 0.1; // slow-fall: the scale eases ~10%/s back toward the window peak
 
 const TrafficChart = memo(function TrafficChart({ samples, max }: { samples: { up: number; down: number }[]; max: number }) {
   const W = 300;
   const H = 72;
   const data = samples.length ? samples : [{ up: 0, down: 0 }];
   const n = data.length;
-  const xAt = (i: number) => (n <= 1 ? W : (i / (n - 1)) * W);
+  // Fixed step + right alignment: the newest point is pinned to the right edge
+  // and the line grows in from the right while the window fills — no horizontal
+  // stretch/wobble as points accumulate (the offset trick).
+  const stepX = W / Math.max(MAX_SAMPLES - 1, 1);
+  const offset = Math.max(0, MAX_SAMPLES - n);
+  const xAt = (i: number) => (offset + i) * stepX;
   const yAt = (v: number) => H - 2 - (v / max) * (H - 8);
   const points = (key: "up" | "down") =>
     data.map((s, i) => `${xAt(i).toFixed(1)},${yAt(s[key]).toFixed(1)}`).join(" ");
-  const area = (key: "up" | "down") => `M${xAt(0).toFixed(1)},${H} L${points(key).split(" ").join(" L")} L${W},${H} Z`;
+  const area = (key: "up" | "down") =>
+    `M${xAt(0).toFixed(1)},${H} L${points(key).split(" ").join(" L")} L${xAt(n - 1).toFixed(1)},${H} Z`;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: 72, display: "block" }}>
-      <path d={area("down")} fill="var(--accent-default)" opacity={0.12} />
-      <path d={area("up")} fill="var(--status-success)" opacity={0.12} />
-      <polyline points={points("down")} fill="none" stroke="var(--accent-default)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-      <polyline points={points("up")} fill="none" stroke="var(--status-success)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+      <path d={area("down")} fill="var(--accent-default)" opacity={0.13} />
+      <path d={area("up")} fill="var(--status-success)" opacity={0.11} />
+      <polyline points={points("down")} fill="none" stroke="var(--accent-default)" strokeWidth={1.8} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+      <polyline points={points("up")} fill="none" stroke="var(--status-success)" strokeWidth={1.8} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 });
@@ -279,12 +281,13 @@ function StatTile({ icon, label, value, accent, onClick, upcase = true }: { icon
   );
 }
 
-const MAX_SAMPLES = 60;
-const SCALE_FLOOR = 1024; // 1 KB/s — keeps the idle scale stable (no flicker)
-
 // Persists the last metrics across page switches so returning to the dashboard
 // shows the last-known values immediately instead of blanking until the next tick.
-let metricsCache: { m: CoreMetrics | null; samples: { up: number; down: number }[] } = { m: null, samples: [] };
+let metricsCache: { m: CoreMetrics | null; samples: { up: number; down: number }[]; smoothPeak: number } = {
+  m: null,
+  samples: [],
+  smoothPeak: SCALE_FLOOR,
+};
 
 const MetricsOverview = memo(function MetricsOverview() {
   const running = useAppStore((s) => s.status.running);
@@ -292,14 +295,22 @@ const MetricsOverview = memo(function MetricsOverview() {
   const t = useT();
   const [m, setM] = useState<CoreMetrics | null>(metricsCache.m);
   const [samples, setSamples] = useState<{ up: number; down: number }[]>(metricsCache.samples);
+  const [chartMax, setChartMax] = useState<number>(metricsCache.smoothPeak * 1.2);
   const latest = useRef<CoreMetrics | null>(null);
+  const samplesRef = useRef(metricsCache.samples);
+  const smoothPeak = useRef(metricsCache.smoothPeak);
 
   // Buffer incoming ticks in a ref and render at a fixed 1 Hz cadence. This
   // decouples the render/repaint rate from the core's push rate: a fast (or
   // mis-throttled) status stream can no longer drive a re-render storm — which
   // was both the chart "too-fast flicker" and the WebView2 renderer crash.
   useEffect(() => {
-    if (!running) { setM(null); setSamples([]); latest.current = null; metricsCache = { m: null, samples: [] }; return; }
+    if (!running) {
+      setM(null); setSamples([]); setChartMax(SCALE_FLOOR * 1.2);
+      latest.current = null; samplesRef.current = []; smoothPeak.current = SCALE_FLOOR;
+      metricsCache = { m: null, samples: [], smoothPeak: SCALE_FLOOR };
+      return;
+    }
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     (async () => {
@@ -310,19 +321,25 @@ const MetricsOverview = memo(function MetricsOverview() {
     const flush = setInterval(() => {
       const cur = latest.current;
       if (!cur) return;
+      const next = [...samplesRef.current, { up: Math.max(0, cur.uplink), down: Math.max(0, cur.downlink) }].slice(-MAX_SAMPLES);
+      samplesRef.current = next;
+      // Shared-axis peak across BOTH series with fast-rise / slow-fall
+      // hysteresis: the scale jumps up instantly to fit a new burst (so a spike
+      // never clips) but eases back down slowly — the axis never re-scales
+      // abruptly tick-to-tick the way the old per-render niceCeil() did.
+      const windowPeak = next.reduce((mx, p) => Math.max(mx, p.up, p.down), 0);
+      const target = Math.max(SCALE_FLOOR, windowPeak);
+      const prev = smoothPeak.current;
+      smoothPeak.current = target >= prev ? target : prev + (target - prev) * FALL_RATE;
+      metricsCache = { m: cur, samples: next, smoothPeak: smoothPeak.current };
       setM(cur);
-      setSamples((s) => {
-        const next = [...s, { up: Math.max(0, cur.uplink), down: Math.max(0, cur.downlink) }].slice(-MAX_SAMPLES);
-        metricsCache = { m: cur, samples: next };
-        return next;
-      });
+      setSamples(next);
+      setChartMax(smoothPeak.current * 1.2);
     }, 1000);
     return () => { cancelled = true; unlisten?.(); clearInterval(flush); };
   }, [running]);
 
   const last = samples[samples.length - 1] ?? { up: 0, down: 0 };
-  const peak = samples.length ? Math.max(...samples.map((s) => Math.max(s.up, s.down))) : 0;
-  const chartMax = Math.max(SCALE_FLOOR, niceCeil(peak));
   const dash = (v: string) => (running ? v : "—");
 
   return (
@@ -336,15 +353,20 @@ const MetricsOverview = memo(function MetricsOverview() {
         <StatTile icon={<ArrowUploadRegular style={{ fontSize: 14 }} />} label={t("dashboard.upTotal")} value={running && m ? formatBytes(m.uplink_total) : "—"} />
         <StatTile icon={<ArrowDownloadRegular style={{ fontSize: 14 }} />} label={t("dashboard.downTotal")} value={running && m ? formatBytes(m.downlink_total) : "—"} />
       </div>
-      <TrafficChart samples={running ? samples : []} max={chartMax} />
-      <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--text-secondary)" }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 9, height: 3, borderRadius: 2, background: "var(--status-success)" }} /> {t("dashboard.upSpeed")}
+      {/* Legend + live readout above the chart, color-matched to each line. */}
+      <div style={{ display: "flex", gap: 18, fontSize: 12, alignItems: "center" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 9, height: 9, borderRadius: "50%", background: "var(--accent-default)", flexShrink: 0 }} />
+          <ArrowDownRegular style={{ fontSize: 13, color: "var(--text-secondary)" }} />
+          <span style={{ color: "var(--text-primary)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{dash(formatSpeed(last.down))}</span>
         </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 9, height: 3, borderRadius: 2, background: "var(--accent-default)" }} /> {t("dashboard.downSpeed")}
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 9, height: 9, borderRadius: "50%", background: "var(--status-success)", flexShrink: 0 }} />
+          <ArrowUpRegular style={{ fontSize: 13, color: "var(--text-secondary)" }} />
+          <span style={{ color: "var(--text-primary)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{dash(formatSpeed(last.up))}</span>
         </span>
       </div>
+      <TrafficChart samples={running ? samples : []} max={chartMax} />
     </div>
   );
 });

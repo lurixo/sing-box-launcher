@@ -333,6 +333,25 @@ html, body, #root {
 
 /* ─── Fluent Reveal Highlight ────────────────────────────────────────────── */
 
+/* Theme-aware reveal glow. Dark mode keeps the original white halo (bright on
+   dark cards); light mode tints with the accent so the halo reads on light
+   cards instead of being washed out. color-mix follows the user's accent when
+   supported, with a static-blue rgba fallback for older WebView2 runtimes. */
+:root {
+  --reveal-color: rgba(0, 120, 212, 0.16);
+  --reveal-border-color: rgba(0, 120, 212, 0.26);
+}
+@supports (color: color-mix(in srgb, red, blue)) {
+  :root {
+    --reveal-color: color-mix(in srgb, var(--accent-default) 18%, transparent);
+    --reveal-border-color: color-mix(in srgb, var(--accent-default) 30%, transparent);
+  }
+}
+:root.dark {
+  --reveal-color: rgba(255, 255, 255, 0.12);
+  --reveal-border-color: rgba(255, 255, 255, 0.18);
+}
+
 .reveal-target {
   --reveal-x: -999px;
   --reveal-y: -999px;
@@ -348,7 +367,7 @@ html, body, #root {
   opacity: 0;
   background: radial-gradient(
     circle 120px at var(--reveal-x) var(--reveal-y),
-    rgba(255, 255, 255, 0.12) 0%,
+    var(--reveal-color) 0%,
     transparent 100%
   );
   transition: opacity 0.2s ease;
@@ -369,7 +388,7 @@ html, body, #root {
   border-radius: inherit;
   background: radial-gradient(
     circle 200px at var(--reveal-x) var(--reveal-y),
-    rgba(255, 255, 255, 0.18) 0%,
+    var(--reveal-border-color) 0%,
     transparent 100%
   );
   z-index: 0;
