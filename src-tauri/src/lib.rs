@@ -362,6 +362,67 @@ async fn open_core_location(mgr: tauri::State<'_, manager::Manager>) -> Result<(
     Ok(())
 }
 
+/// Apply a previously staged kernel download: stop the running core (Windows
+/// can't replace a running exe), swap the staged binary into place, then
+/// relaunch the core if it had been running. Gated behind a user confirmation
+/// in the UI (the download itself does not restart anything).
+#[tauri::command]
+async fn apply_staged_kernel(
+    mgr: tauri::State<'_, manager::Manager>,
+    grp: tauri::State<'_, groups::Groups>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let was_running = {
+        let mut m = mgr.lock().await;
+        let running = m.running;
+        if m.proxy_enabled {
+            m.proxy_enabled = false;
+            let _ = proxy::set_system_proxy(false, "", "");
+        }
+        if m.running {
+            m.stop().await?;
+        }
+        grp.lock().await.clear();
+        core_update::apply_staged(&m.base_dir)?;
+        running
+    };
+
+    tray::update_tray_icon(&app, false, false);
+
+    if was_running {
+        // Bring the core back up on the freshly installed kernel.
+        start_core(mgr, grp, app).await.map(|_| ())
+    } else {
+        let _ = app.emit("core-status-changed", mgr.lock().await.status());
+        Ok(())
+    }
+}
+
+/// Drop a staged-but-not-applied kernel download (user cancelled the restart).
+#[tauri::command]
+async fn discard_staged_kernel(
+    mgr: tauri::State<'_, manager::Manager>,
+) -> Result<(), AppError> {
+    let base_dir = mgr.lock().await.base_dir.clone();
+    core_update::discard_staged(&base_dir);
+    Ok(())
+}
+
+/// Clear cache.db and any leftover downloaded-core artifacts, keeping the
+/// in-use core. Refuses while the core runs (cache.db is locked); the UI
+/// disables the button in that case too. Returns the number of files removed.
+#[tauri::command]
+async fn clear_kernel_cache(
+    mgr: tauri::State<'_, manager::Manager>,
+) -> Result<u32, AppError> {
+    let mut m = mgr.lock().await;
+    m.refresh_running();
+    if m.running {
+        return Err(AppError::Update("stop the core before clearing the cache".into()));
+    }
+    Ok(core_update::clear_cache(&m.base_dir))
+}
+
 /// Disable the system proxy, stop the core, and exit the process. Shared by
 /// every quit path: the tray Quit item and the window-close handler when the
 /// user has not opted to minimize to tray.
@@ -539,12 +600,17 @@ pub fn run() {
             settings::set_exit_core_on_close,
             settings::set_startup_delay,
             settings::set_disable_gpu_compositing,
+            settings::set_kernel_source,
             logbus::get_logs,
             logbus::clear_logs,
             proxy::enable_uwp_loopback,
             core_update::get_core_info,
             core_update::check_core_update,
-            core_update::update_core,
+            core_update::get_staged_kernel,
+            core_update::download_kernel,
+            apply_staged_kernel,
+            discard_staged_kernel,
+            clear_kernel_cache,
             elevation::is_admin,
         ])
         .setup(move |app| {

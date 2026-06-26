@@ -9,6 +9,7 @@ import {
   ArrowSyncRegular,
   ArrowDownloadRegular,
   FolderOpenRegular,
+  DeleteRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { ACCENT_PRESETS } from "../lib/colorEngine";
@@ -18,7 +19,17 @@ import { listen } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { useReveal } from "../hooks/useReveal";
 import { useT, type TranslationKey, type Lang } from "../i18n/strings";
-import type { Theme, AppSettings, CoreInfo, CoreUpdateCheck, CoreBuildInfo } from "../types";
+import type { Theme, AppSettings, CoreInfo, CoreUpdateCheck, StagedKernel, KernelSource } from "../types";
+
+const KERNEL_SOURCES: { id: KernelSource; label: string }[] = [
+  { id: "lurixo", label: "lurixo" },
+  { id: "sagernet", label: "SagerNet" },
+  { id: "ref1nd", label: "reF1nd" },
+];
+
+function sourceLabel(s: string): string {
+  return s === "sagernet" ? "SagerNet" : s === "ref1nd" ? "reF1nd" : "lurixo";
+}
 
 const themes: { id: Theme; icon: React.ReactNode; key: TranslationKey }[] = [
   { id: "light", icon: <WeatherSunnyRegular />, key: "settings.themeLight" },
@@ -119,6 +130,10 @@ export function Settings() {
   const [coreInfo, setCoreInfo] = useState<CoreInfo | null>(null);
   const [coreCheck, setCoreCheck] = useState<CoreUpdateCheck | null>(null);
   const [coreBusy, setCoreBusy] = useState(false);
+  const [cacheBusy, setCacheBusy] = useState(false);
+  const [kernelSource, setKernelSource] = useState<KernelSource>("lurixo");
+  // A staged-but-not-applied download; presence opens the restart-confirm modal.
+  const [staged, setStaged] = useState<StagedKernel | null>(null);
   const [coreMsg, setCoreMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
 
   const loadCoreInfo = useCallback(async () => {
@@ -144,6 +159,7 @@ export function Settings() {
         setExitCoreOnClose(settings.exit_core_on_close);
         setAutoStartCore(settings.auto_start_core);
         setStartupDelay(settings.startup_delay_secs);
+        setKernelSource(settings.kernel_source);
         setElevated(await invoke<boolean>("is_admin"));
       } catch (e) {
         setGenErr(String(e));
@@ -220,6 +236,10 @@ export function Settings() {
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => {});
     loadCoreInfo();
+    // Re-open the restart prompt for a download staged in a prior session.
+    invoke<StagedKernel | null>("get_staged_kernel")
+      .then((s) => { if (s) setStaged(s); })
+      .catch(() => {});
     const un = listen<{ stage: string; message: string }>("core-update-progress", (e) => {
       setCoreMsg({ type: e.payload.stage === "done" ? "ok" : "info", text: e.payload.message });
     });
@@ -251,6 +271,19 @@ export function Settings() {
     }
   };
 
+  const handleSetSource = async (src: KernelSource) => {
+    if (src === kernelSource) return;
+    try {
+      await invoke("set_kernel_source", { source: src });
+      setKernelSource(src);
+      // A check against the old source no longer applies.
+      setCoreCheck(null);
+      setCoreMsg(null);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
+
   const handleCheckCore = async () => {
     setCoreBusy(true);
     setCoreMsg(null);
@@ -259,7 +292,7 @@ export function Settings() {
       setCoreCheck(c);
       setCoreMsg(
         c.update_available
-          ? { type: "info", text: t("settings.updateAvailable", { version: c.latest.version }) }
+          ? { type: "info", text: t("settings.updateAvailable", { version: c.latest_version }) }
           : { type: "ok", text: t("settings.upToDate") }
       );
     } catch (e) {
@@ -268,18 +301,57 @@ export function Settings() {
     setCoreBusy(false);
   };
 
-  const handleUpdateCore = async () => {
+  // Download stages the new core next to the live one (the core may keep
+  // running); we then prompt the user to confirm the restart before applying.
+  const handleDownload = async () => {
     setCoreBusy(true);
     setCoreMsg(null);
     try {
-      const info = await invoke<CoreBuildInfo>("update_core");
-      setCoreMsg({ type: "ok", text: t("settings.coreUpdated", { version: info.version }) });
+      const s = await invoke<StagedKernel>("download_kernel");
+      setStaged(s);
+    } catch (e) {
+      setCoreMsg({ type: "err", text: String(e) });
+    }
+    setCoreBusy(false);
+  };
+
+  const handleApplyStaged = async () => {
+    const s = staged;
+    if (!s) return;
+    setStaged(null);
+    setCoreBusy(true);
+    setCoreMsg({ type: "info", text: t("settings.applying") });
+    try {
+      await invoke("apply_staged_kernel");
+      setCoreMsg({ type: "ok", text: t("settings.kernelApplied", { version: s.version }) });
       setCoreCheck(null);
       await loadCoreInfo();
     } catch (e) {
       setCoreMsg({ type: "err", text: String(e) });
     }
     setCoreBusy(false);
+  };
+
+  const handleCancelStaged = async () => {
+    setStaged(null);
+    try {
+      await invoke("discard_staged_kernel");
+    } catch {
+      /* noop */
+    }
+    setCoreMsg({ type: "info", text: t("settings.downloadCanceled") });
+  };
+
+  const handleClearCache = async () => {
+    setCacheBusy(true);
+    setCoreMsg(null);
+    try {
+      const n = await invoke<number>("clear_kernel_cache");
+      setCoreMsg({ type: "ok", text: t("settings.cacheCleared", { count: n }) });
+    } catch (e) {
+      setCoreMsg({ type: "err", text: String(e) });
+    }
+    setCacheBusy(false);
   };
 
   const handleUwpLoopback = async () => {
@@ -610,13 +682,31 @@ export function Settings() {
           {t("settings.core")}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0" }}>
+        {/* Kernel source */}
+        <div className="section-label" style={{ marginBottom: 8 }}>{t("settings.kernelSource")}</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {KERNEL_SOURCES.map((s) => (
+            <button
+              key={s.id}
+              className={`fluent-btn reveal-target ${kernelSource === s.id ? "accent" : ""}`}
+              onClick={() => handleSetSource(s.id)}
+              style={{ flex: 1, padding: "8px" }}
+            >
+              <span style={{ fontSize: 13 }}>{s.label}</span>
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", margin: "8px 0 6px" }}>
+          {t("settings.kernelSourceDesc")}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderTop: "1px solid var(--border-divider)" }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.singboxCore")}</div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
               {coreInfo?.present
-                ? coreInfo.build
-                  ? t("settings.coreVersion", { version: coreInfo.build.version })
+                ? coreInfo.version
+                  ? `${sourceLabel(coreInfo.source)} ${coreInfo.version}`
                   : t("settings.coreInstalledUnknown")
                 : t("settings.coreNotInstalled")}
             </div>
@@ -646,21 +736,48 @@ export function Settings() {
             {(coreCheck?.update_available || !coreInfo?.present) && (
               <button
                 className="fluent-btn accent reveal-target"
-                onClick={handleUpdateCore}
-                disabled={coreBusy || status.running}
-                title={status.running ? t("settings.stopToUpdate") : undefined}
+                onClick={handleDownload}
+                disabled={coreBusy}
                 style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
               >
-                <ArrowDownloadRegular style={{ fontSize: 14 }} />
+                {coreBusy ? (
+                  <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                ) : (
+                  <ArrowDownloadRegular style={{ fontSize: 14 }} />
+                )}
                 {coreInfo?.present ? t("settings.update") : t("settings.download")}
               </button>
             )}
           </div>
         </div>
 
-        {status.running && (coreCheck?.update_available || !coreInfo?.present) && (
+        {/* Clear cache */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderTop: "1px solid var(--border-divider)" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.clearCache")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+              {t("settings.clearCacheDesc")}
+            </div>
+          </div>
+          <button
+            className="fluent-btn reveal-target"
+            onClick={handleClearCache}
+            disabled={cacheBusy || status.running}
+            title={status.running ? t("settings.clearCacheRunning") : undefined}
+            style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+          >
+            {cacheBusy ? (
+              <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} />
+            ) : (
+              <DeleteRegular style={{ fontSize: 14 }} />
+            )}
+            {t("settings.clearCache")}
+          </button>
+        </div>
+
+        {status.running && (
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
-            {t("settings.stopToUpdate")}
+            {t("settings.clearCacheRunning")}
           </div>
         )}
 
@@ -700,6 +817,43 @@ export function Settings() {
           <div style={{ marginTop: 4 }}>{t("settings.builtWith")}</div>
         </div>
       </div>
+
+      {/* Restart-confirm modal: shown after a download stages a new core, before
+          it is applied. Confirm swaps + restarts the core; cancel discards it. */}
+      {staged && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div className="fluent-card" style={{ width: 360, padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+              {t("settings.applyKernelTitle")}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              {t("settings.applyKernelBody", { version: `${sourceLabel(staged.source)} ${staged.version}` })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button
+                className="fluent-btn reveal-target"
+                onClick={handleCancelStaged}
+                style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
+              >
+                {t("settings.applyKernelCancel")}
+              </button>
+              <button
+                className="fluent-btn accent reveal-target"
+                onClick={handleApplyStaged}
+                style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
+              >
+                {t("settings.applyKernelConfirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

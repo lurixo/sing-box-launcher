@@ -35,6 +35,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4"
 sha2 = "0.11"
+semver = "1.0"
 getrandom = "0.4"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 tonic = "0.12"

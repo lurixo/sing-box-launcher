@@ -21,6 +21,10 @@ fn default_lang() -> String {
     "zh-CN".into()
 }
 
+fn default_kernel_source() -> String {
+    "lurixo".into()
+}
+
 fn default_startup_delay() -> u32 {
     30
 }
@@ -30,6 +34,9 @@ pub const LOG_LEVELS: [&str; 5] = ["trace", "debug", "info", "warn", "error"];
 
 /// Allowed UI languages (kept in sync with the frontend dictionaries).
 pub const LANGS: [&str; 2] = ["en", "zh-CN"];
+
+/// Allowed kernel download sources (kept in sync with core_update::KernelSource).
+pub const KERNEL_SOURCES: [&str; 3] = ["lurixo", "sagernet", "ref1nd"];
 
 /// Persistent application settings stored in settings.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +73,10 @@ pub struct AppSettings {
     /// Dormant by default; flip on only if the WebView2 crash recurs.
     #[serde(default)]
     pub disable_gpu_compositing: bool,
+    /// Where to download the sing-box core from: "lurixo" (bundled default),
+    /// "sagernet" or "ref1nd". Drives the update-check + download logic.
+    #[serde(default = "default_kernel_source")]
+    pub kernel_source: String,
 }
 
 impl Default for AppSettings {
@@ -83,6 +94,7 @@ impl Default for AppSettings {
             exit_core_on_close: true,
             startup_delay_secs: default_startup_delay(),
             disable_gpu_compositing: false,
+            kernel_source: default_kernel_source(),
         }
     }
 }
@@ -234,6 +246,20 @@ pub async fn set_disable_gpu_compositing(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.disable_gpu_compositing = enabled;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_kernel_source(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    source: String,
+) -> Result<(), AppError> {
+    if !KERNEL_SOURCES.contains(&source.as_str()) {
+        return Err(AppError::Config(format!("invalid kernel source: {source}")));
+    }
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.kernel_source = source;
     save_settings(&mgr.base_dir, &settings)
 }
 

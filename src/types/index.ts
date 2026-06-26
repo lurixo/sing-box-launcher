@@ -32,7 +32,10 @@ export interface AppSettings {
   exit_core_on_close: boolean;
   startup_delay_secs: number;
   disable_gpu_compositing: boolean;
+  kernel_source: KernelSource;
 }
+
+export type KernelSource = "lurixo" | "sagernet" | "ref1nd";
 
 export interface LogLine {
   source: string;
@@ -90,23 +93,22 @@ export interface CheckResult {
   content: string;
 }
 
-export interface CoreBuildInfo {
-  version: string;
-  windows_asset: string;
-  windows_sha256: string;
-  built_at: string;
-  run_id: string;
-}
-
 export interface CoreInfo {
   present: boolean;
-  build: CoreBuildInfo | null;
+  source: KernelSource;
+  version: string | null;
 }
 
 export interface CoreUpdateCheck {
-  current: CoreBuildInfo | null;
-  latest: CoreBuildInfo;
+  source: KernelSource;
+  current_version: string | null;
+  latest_version: string;
   update_available: boolean;
+}
+
+export interface StagedKernel {
+  source: KernelSource;
+  version: string;
 }
 
 export type DelayMap = Record<string, number>;
