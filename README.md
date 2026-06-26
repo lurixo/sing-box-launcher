@@ -1,10 +1,10 @@
-# sing-box-launcher
+# Maestro
 
 A lightweight Windows GUI for managing the [sing-box](https://sing-box.sagernet.org/) proxy core, built with **Tauri v2** (Rust backend + React frontend) and styled with **Windows Fluent Design System**.
 
 ## Features
 
-- **Portable** — Single self-contained folder, no installer; all data lives next to the executable
+- **Portable** — Single self-contained folder, no installer; all data lives in a `data/` folder beside the executable
 - **Bundled Core** — The `sing-box.exe` core is packaged with each build
 - **Core Updates** — Check for and download newer cores from [sing-box-releases](https://github.com/lurixo/sing-box-releases/releases) in-app
 - **Core Management** — Start, stop, and restart the sing-box process with automatic config injection
@@ -51,17 +51,18 @@ npm run tauri dev
 npx tauri build --no-bundle
 ```
 
-A production build is produced by CI as `sing-box-launcher-portable.zip`: a folder
-containing `sing-box-launcher.exe`, the bundled `sing-box.exe` core,
-`EnableLoopback.exe`, and `singbox-build-info.json`. Unzip it anywhere and run —
-no installation required. (Requires the Microsoft Edge WebView2 runtime, present
-on Windows 11 and most Windows 10 systems.)
+A production build is produced by CI as `maestro-portable.zip`: a folder with
+`Maestro.exe` at the root and a `data/` subdirectory holding the bundled
+`sing-box.exe` core, `EnableLoopback.exe`, `singbox-build-info.json`, plus
+configs, settings and runtime files. Unzip it anywhere and run — no installation
+required. (Requires the Microsoft Edge WebView2 runtime, present on Windows 11
+and most Windows 10 systems.)
 
 ### Configs and the core
 
 - The core (`sing-box.exe`) ships bundled. Use **Settings → Core** to check for and
   download a newer build from [sing-box-releases](https://github.com/lurixo/sing-box-releases/releases).
-- Configs are named profiles stored under `configs/<name>.json`. Create, edit, or
+- Configs are named profiles stored under `data/configs/<name>.json`. Create, edit, or
   import them from the Dashboard; select the active one to run.
 - On start, the launcher reads the active config, injects `clash_api`/`cache_file`
   settings, writes `config_runtime.json` (the original is never modified), and runs
@@ -146,7 +147,7 @@ The `build.yml` workflow:
 - Installs Rust stable + Node.js 22.x
 - Downloads the latest `sing-box.exe` core per `singbox-build-info.json` (sha256-verified)
 - Runs `npx tauri build --no-bundle`
-- Assembles and uploads `sing-box-launcher-portable.zip` (7-day retention)
+- Assembles and uploads `maestro-portable.zip` (7-day retention)
 
 ### Release (on version tag)
 
@@ -160,7 +161,7 @@ git push origin v1.0.0
 
 The `release.yml` workflow will:
 - Build the application and bundle the core
-- Create a GitHub Release titled "sing-box-launcher v1.0.0"
+- Create a GitHub Release titled "Maestro v1.0.0"
 - Upload the portable `.zip` as a release asset
 - Auto-generate changelog from commits since the last tag
 

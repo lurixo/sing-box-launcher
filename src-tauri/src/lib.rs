@@ -324,21 +324,14 @@ async fn open_core_location(mgr: tauri::State<'_, manager::Manager>) -> Result<(
     Ok(())
 }
 
-/// Window close requested by the custom title-bar X: minimize to tray or quit
-/// depending on the `close_to_tray` setting.
-#[tauri::command]
-async fn request_close(
-    mgr: tauri::State<'_, manager::Manager>,
-    app: tauri::AppHandle,
-) -> Result<(), AppError> {
-    let mut m = mgr.lock().await;
-    let close_to_tray = settings::load_settings(&m.base_dir).close_to_tray;
-    if close_to_tray {
-        drop(m);
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = w.hide();
-        }
-    } else {
+/// Disable the system proxy, stop the core, and exit the process. Shared by
+/// every quit path: the tray Quit item and the window-close handler when the
+/// user has not opted to minimize to tray.
+pub fn shutdown_and_exit(app: &tauri::AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mgr = app.state::<manager::Manager>();
+        let mut m = mgr.lock().await;
         if m.proxy_enabled {
             m.proxy_enabled = false;
             let _ = proxy::set_system_proxy(false, "", "");
@@ -346,10 +339,8 @@ async fn request_close(
         if m.running {
             let _ = m.stop().await;
         }
-        drop(m);
         app.exit(0);
-    }
-    Ok(())
+    });
 }
 
 // ─── App Setup ──────────────────────────────────────────────────────────────
@@ -405,7 +396,7 @@ pub fn run() {
     let base_dir = data_dir;
     config::ensure_configs_dir(&base_dir);
     dlog(&dl, &format!("base_dir = {}", base_dir.display()));
-    info!(base_dir = %base_dir.display(), "starting sing-box launcher");
+    info!(base_dir = %base_dir.display(), "starting Maestro");
 
     // Check if silent start is enabled
     let app_settings = settings::load_settings(&base_dir);
@@ -460,7 +451,6 @@ pub fn run() {
             close_all_connections,
             open_base_dir,
             open_core_location,
-            request_close,
             accent::get_system_accent,
             config::list_configs,
             config::get_config,
@@ -523,19 +513,7 @@ pub fn run() {
                 if close_to_tray {
                     let _ = window.hide();
                 } else {
-                    let app = window.app_handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        let mgr = app.state::<manager::Manager>();
-                        let mut m = mgr.lock().await;
-                        if m.proxy_enabled {
-                            m.proxy_enabled = false;
-                            let _ = proxy::set_system_proxy(false, "", "");
-                        }
-                        if m.running {
-                            let _ = m.stop().await;
-                        }
-                        app.exit(0);
-                    });
+                    shutdown_and_exit(window.app_handle());
                 }
             }
         })

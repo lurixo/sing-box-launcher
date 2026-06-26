@@ -2,7 +2,6 @@ import { useAppStore } from "../stores/appStore";
 
 export const en = {
   "nav.dashboard": "Dashboard",
-  "nav.proxies": "Proxies",
   "nav.connections": "Connections",
   "nav.logs": "Logs",
   "nav.settings": "Settings",
@@ -70,13 +69,10 @@ export const en = {
   "dashboard.downTotal": "Download total",
 
   "proxies.title": "Proxies",
-  "proxies.startToView": "Start the core to view proxy groups.",
-  "proxies.loading": "Loading proxy groups…",
   "proxies.groupsCount": "Groups ({count})",
   "proxies.searchNodes": "Search nodes…",
   "proxies.testAll": "Test All",
   "proxies.nodesCount": "{count} nodes",
-  "proxies.selected": "Selected:",
   "proxies.timeout": "timeout",
 
   "connections.title": "Connections",
@@ -157,7 +153,6 @@ export type TranslationKey = keyof typeof en;
 
 export const zhCN: Record<TranslationKey, string> = {
   "nav.dashboard": "仪表盘",
-  "nav.proxies": "代理",
   "nav.connections": "连接",
   "nav.logs": "日志",
   "nav.settings": "设置",
@@ -225,13 +220,10 @@ export const zhCN: Record<TranslationKey, string> = {
   "dashboard.downTotal": "下载总量",
 
   "proxies.title": "代理",
-  "proxies.startToView": "启动内核以查看代理组。",
-  "proxies.loading": "正在加载代理组……",
   "proxies.groupsCount": "代理组（{count}）",
   "proxies.searchNodes": "搜索节点……",
   "proxies.testAll": "测试全部",
   "proxies.nodesCount": "{count} 个节点",
-  "proxies.selected": "已选：",
   "proxies.timeout": "超时",
 
   "connections.title": "连接",

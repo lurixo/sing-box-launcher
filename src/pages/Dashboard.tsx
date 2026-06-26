@@ -452,14 +452,11 @@ const ProxyGroups = memo(function ProxyGroups() {
 });
 
 export function Dashboard() {
-  const { status, loading, error, startCore, stopCore, restartCore, toggleProxy, clearError } =
+  const { status, loading, error, startCore, stopCore, restartCore, toggleProxy, clearError, ipNonce, bumpIp } =
     useAppStore();
   const t = useT();
 
   const revealRef = useReveal<HTMLDivElement>();
-
-  // Bumped after a clash-mode switch to trigger an outbound-IP re-resolve.
-  const [ipNonce, setIpNonce] = useState(0);
 
   // ─── Config state ─────────────────────────────────────────────────────────
   const [configExpanded, setConfigExpanded] = useState(true);
@@ -691,7 +688,7 @@ export function Dashboard() {
         </div>
         <Uptime />
         <div style={{ marginLeft: "auto" }}>
-          <ClashModeSelector onModeChanged={() => setIpNonce((n) => n + 1)} />
+          <ClashModeSelector onModeChanged={bumpIp} />
         </div>
       </div>
 

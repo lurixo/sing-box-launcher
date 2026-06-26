@@ -38,9 +38,11 @@ interface AppState {
 
   // Proxy groups
   groups: ProxyGroup[];
-  selectedGroup: string | null;
   delays: Record<string, DelayMap>;
   testingGroup: string | null;
+
+  // Outbound-IP refresh signal (bumped on clash-mode or node switch)
+  ipNonce: number;
 
   // Actions
   fetchStatus: () => Promise<void>;
@@ -51,7 +53,7 @@ interface AppState {
   fetchGroups: () => Promise<void>;
   switchProxy: (group: string, node: string) => Promise<void>;
   testDelay: (group: string) => Promise<void>;
-  selectGroup: (group: string) => void;
+  bumpIp: () => void;
 
   // Internal
   setStatus: (status: CoreStatus) => void;
@@ -72,7 +74,6 @@ const defaultStatus: CoreStatus = {
 const STORAGE_THEME = "sb-theme";
 const STORAGE_ACCENT = "sb-accent";
 const STORAGE_ACCENT_SRC = "sb-accent-source";
-const STORAGE_GROUP = "sb-selected-group";
 const STORAGE_LANG = "sb-lang";
 const DEFAULT_ACCENT = "#0078D4";
 
@@ -156,9 +157,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Proxy groups
   groups: [],
-  selectedGroup: load(STORAGE_GROUP, "") || null,
   delays: {},
   testingGroup: null,
+  ipNonce: 0,
 
   // Actions
   fetchStatus: async () => {
@@ -187,7 +188,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       await invoke("stop_core");
       const status = await invoke<CoreStatus>("get_status");
-      set({ status, loading: false, groups: [], selectedGroup: null, delays: {} });
+      set({ status, loading: false, groups: [], delays: {} });
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -219,11 +220,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchGroups: async () => {
     try {
       const groups = await invoke<ProxyGroup[]>("get_proxy_groups");
-      const selectedGroup =
-        get().selectedGroup && groups.find((g) => g.name === get().selectedGroup)
-          ? get().selectedGroup
-          : groups[0]?.name ?? null;
-      set({ groups, selectedGroup });
+      set({ groups });
     } catch {
       // Groups not ready yet
     }
@@ -232,8 +229,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   switchProxy: async (group, node) => {
     try {
       await invoke("switch_proxy", { group, node });
+      // Node changed → outbound route changed; re-resolve the outbound IP.
       set((s) => ({
         groups: s.groups.map((g) => g.name === group ? { ...g, now: node } : g),
+        ipNonce: s.ipNonce + 1,
       }));
     } catch (e) {
       set({ error: String(e) });
@@ -250,19 +249,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  selectGroup: (group) => {
-    save(STORAGE_GROUP, group);
-    set({ selectedGroup: group });
-  },
+  bumpIp: () => set((s) => ({ ipNonce: s.ipNonce + 1 })),
 
   setStatus: (status) => set({ status }),
-  setGroups: (groups) => {
-    const selectedGroup =
-      get().selectedGroup && groups.find((g) => g.name === get().selectedGroup)
-        ? get().selectedGroup
-        : groups[0]?.name ?? null;
-    set({ groups, selectedGroup });
-  },
+  setGroups: (groups) => set({ groups }),
   clearError: () => set({ error: null }),
 }));
 

@@ -12,7 +12,6 @@ const TOOLTIP: &str = "Maestro";
 fn tr(lang: &str, key: &str) -> &'static str {
     let zh = lang == "zh-CN";
     match key {
-        "show" => if zh { "显示窗口" } else { "Show Window" },
         "stop" => if zh { "停止内核" } else { "Stop Core" },
         "start" => if zh { "启动内核" } else { "Start Core" },
         "connections" => if zh { "活动连接" } else { "Active Connections" },
@@ -30,10 +29,10 @@ fn current_lang() -> String {
     crate::settings::load_settings(&manager::data_dir()).lang
 }
 
-/// Build the tray menu in the given language. Order top→bottom:
-/// show / stop / start / connections / restart / quit.
+/// Build the tray (right-click) menu in the given language. Order top→bottom:
+/// stop / start / connections / restart / quit. Left-click raises the window
+/// instead of opening this menu, so there is no "show window" item.
 fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
-    let show = MenuItemBuilder::with_id("show", tr(lang, "show")).build(app)?;
     let stop = MenuItemBuilder::with_id("stop", tr(lang, "stop")).build(app)?;
     let start = MenuItemBuilder::with_id("start", tr(lang, "start")).build(app)?;
     let connections = MenuItemBuilder::with_id("connections", tr(lang, "connections")).build(app)?;
@@ -41,8 +40,6 @@ fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
     let quit = MenuItemBuilder::with_id("quit", tr(lang, "quit")).build(app)?;
 
     MenuBuilder::new(app)
-        .item(&show)
-        .separator()
         .item(&stop)
         .item(&start)
         .item(&connections)
@@ -74,10 +71,12 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .icon(tauri::include_image!("icons/32x32.png"))
         .tooltip(TOOLTIP)
         .menu(&menu)
+        // Left-click raises the window (see on_tray_icon_event); the context
+        // menu opens only on right-click.
+        .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| {
             let app = app.clone();
             match event.id().as_ref() {
-                "show" => show_main(&app),
                 // Route core control through the frontend so the full start flow
                 // (metrics + group streams) runs, not just a bare process spawn.
                 "start" => { let _ = app.emit("tray-action", "start"); }
@@ -87,20 +86,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     show_main(&app);
                     let _ = app.emit("navigate", "connections");
                 }
-                "quit" => {
-                    tauri::async_runtime::spawn(async move {
-                        let mgr = app.state::<crate::manager::Manager>();
-                        let mut mgr = mgr.lock().await;
-                        if mgr.proxy_enabled {
-                            mgr.proxy_enabled = false;
-                            let _ = crate::proxy::set_system_proxy(false, "", "");
-                        }
-                        if mgr.running {
-                            let _ = mgr.stop().await;
-                        }
-                        app.exit(0);
-                    });
-                }
+                "quit" => crate::shutdown_and_exit(&app),
                 _ => {}
             }
         })
