@@ -75,17 +75,29 @@ function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
     if (!running) { setLines([]); ipCache = []; ipCacheNonce = -1; return; }
     if (refreshSignal === ipCacheNonce) return; // remount with no real change → keep cache
     let cancelled = false;
-    const timer = setTimeout(async () => {
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const tryFetch = async () => {
+      if (cancelled) return;
       try {
         const res = await invoke<OutboundIpInfo[]>("get_outbound_ip");
         if (cancelled) return;
-        setLines(res);
-        ipCache = res;
-        ipCacheNonce = refreshSignal;
+        if (res.length > 0) {
+          setLines(res);
+          ipCache = res;
+          ipCacheNonce = refreshSignal; // lock the cache only on a real result
+          return;
+        }
+        // Empty right after a node/mode switch (still reconnecting) is a soft
+        // failure: keep the last-known IP shown and retry, rather than caching
+        // the empty result and advancing the nonce (which hid the row until the
+        // next manual switch).
       } catch {
-        /* keep last known */
+        /* transport error — keep last known, retry */
       }
-    }, refreshSignal <= 0 ? 800 : 600);
+      if (!cancelled && attempts++ < 8) timer = setTimeout(tryFetch, 700);
+    };
+    timer = setTimeout(tryFetch, refreshSignal <= 0 ? 800 : 600);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [running, refreshSignal]);
 

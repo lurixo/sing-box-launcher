@@ -20,6 +20,8 @@ use crate::error::AppError;
 
 /// Newest releases of the app repo, pre-release included (sorted newest-first).
 const RELEASES_API: &str = "https://api.github.com/repos/lurixo/Maestro/releases?per_page=10";
+/// The repo every app download MUST come from (pinned in the asset URL).
+const REPO: &str = "lurixo/Maestro";
 /// Bundled build-info filename (lives in base_dir, i.e. data/), and the same
 /// name published as a release asset.
 const BUILD_INFO_FILE: &str = "maestro-build-info.json";
@@ -104,7 +106,7 @@ async fn fetch_remote_build_info() -> Result<(AppBuildInfo, GhRelease), AppError
             .iter()
             .find(|a| a.name == BUILD_INFO_FILE)
             .ok_or_else(|| AppError::Update("no maestro-build-info.json in latest release".into()))?;
-        ensure_github_https(&asset.browser_download_url)?;
+        ensure_release_url(&asset.browser_download_url)?;
         asset.browser_download_url.clone()
     };
     let raw = http_client()
@@ -128,19 +130,37 @@ fn http_client() -> Client {
     Client::builder()
         .timeout(Duration::from_secs(300))
         .user_agent("maestro")
+        .redirect(github_redirect_policy())
         .build()
         .unwrap_or_else(|_| Client::new())
 }
 
-/// The asset URL from the API must point at GitHub's own download host.
-fn ensure_github_https(url: &str) -> Result<(), AppError> {
-    if url.starts_with("https://github.com/")
-        || url.starts_with("https://objects.githubusercontent.com/")
-    {
+/// Follow redirects only while they stay on GitHub's own hosts (github.com →
+/// objects.githubusercontent.com), so a hijacked redirect can't bounce the
+/// download elsewhere.
+fn github_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let host = attempt.url().host_str().unwrap_or("").to_ascii_lowercase();
+        let ok = host == "github.com" || host.ends_with(".githubusercontent.com");
+        if !ok {
+            attempt.error("redirect to a non-GitHub host")
+        } else if attempt.previous().len() > 10 {
+            attempt.error("too many redirects")
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+/// Pin a release-asset URL to the exact repo it must come from, not just the
+/// github.com host: `https://github.com/lurixo/Maestro/releases/download/…`.
+fn ensure_release_url(url: &str) -> Result<(), AppError> {
+    let prefix = format!("https://github.com/{REPO}/releases/download/");
+    if url.starts_with(&prefix) {
         Ok(())
     } else {
         Err(AppError::Update(
-            "refusing to download update from a non-GitHub URL".into(),
+            "refusing to download update from an unexpected URL".into(),
         ))
     }
 }
@@ -205,11 +225,25 @@ fn with_suffix(p: &Path, suffix: &str) -> PathBuf {
 /// waits for THIS process to exit, then starts the new exe. Windows permits
 /// renaming a running exe (it just can't be deleted/overwritten), so we move
 /// the live exe aside (.old, cleaned next launch) and the staged one in.
-pub fn apply_staged(base_dir: &Path) -> Result<(), AppError> {
+pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<(), AppError> {
     let cur = std::env::current_exe().map_err(|e| AppError::Update(format!("current exe: {e}")))?;
     let staged = with_suffix(&cur, ".new");
     if !staged.exists() {
         return Err(AppError::Update("no downloaded update to apply".into()));
+    }
+    // Re-verify the staged bytes against the hash captured at download (held in
+    // this elevated process's memory — not the on-disk build-info, which a
+    // non-elevated process could rewrite alongside the `.new`) before it becomes
+    // the admin-run exe.
+    if let Some(expected) = expected_sha {
+        let bytes = std::fs::read(&staged)
+            .map_err(|e| AppError::Update(format!("read staged update: {e}")))?;
+        if !sha256_hex(&bytes).eq_ignore_ascii_case(expected) {
+            let _ = std::fs::remove_file(&staged);
+            return Err(AppError::Update(
+                "staged update failed integrity check; discarded".into(),
+            ));
+        }
     }
     let old = with_suffix(&cur, ".old");
     let _ = std::fs::remove_file(&old);
@@ -264,11 +298,16 @@ fn spawn_relauncher(_exe: &Path) -> bool {
     false
 }
 
-/// Remove a leftover `<exe>.old` from a prior self-update. Call once at startup.
-pub fn cleanup_leftovers() {
+/// Startup cleanup: drop a leftover `<exe>.old` from a completed self-update,
+/// plus any cross-session staged `<exe>.new` + build-info. A `.new` from a
+/// previous session can no longer be integrity-verified (its in-memory hash is
+/// gone), so it is discarded rather than re-prompted and trusted.
+pub fn cleanup_leftovers(base_dir: &Path) {
     if let Ok(cur) = std::env::current_exe() {
         let _ = std::fs::remove_file(with_suffix(&cur, ".old"));
+        let _ = std::fs::remove_file(with_suffix(&cur, ".new"));
     }
+    let _ = std::fs::remove_file(base_dir.join(STAGED_BUILD_INFO));
 }
 
 // ─── IPC Commands ────────────────────────────────────────────────────────────
@@ -383,7 +422,7 @@ pub async fn download_app_update(
             .ok_or_else(|| {
                 AppError::Update(format!("release asset {} not found", remote.windows_asset))
             })?;
-        ensure_github_https(&asset.browser_download_url)?;
+        ensure_release_url(&asset.browser_download_url)?;
         asset.browser_download_url.clone()
     };
 
@@ -411,6 +450,9 @@ pub async fn download_app_update(
         .map_err(|e| AppError::Update(format!("serialize build info: {e}")))?;
     std::fs::write(base_dir.join(STAGED_BUILD_INFO), raw)
         .map_err(|e| AppError::Update(format!("stage build info: {e}")))?;
+    // Remember the verified hash in-process so apply can re-check the staged
+    // bytes against it (rather than the rewritable on-disk build-info).
+    mgr.lock().await.staged_app_sha = Some(actual);
 
     emit_progress(&app, "done", &format!("Downloaded {}", remote.version));
     info!(version = %remote.version, built_at = %remote.built_at, "app update staged");

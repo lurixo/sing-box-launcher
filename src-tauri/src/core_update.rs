@@ -31,6 +31,7 @@ const REF1ND_RELEASES_API: &str =
 const BUILD_INFO_FILE: &str = "singbox-build-info.json";
 const KERNEL_META_FILE: &str = "installed_kernel.json";
 const CORE_FILE: &str = "sing-box.exe";
+const CORE_OLD: &str = "sing-box.exe.old";
 const STAGED_CORE: &str = "sing-box.exe.new";
 const STAGED_BUILD_INFO: &str = "singbox-build-info.json.new";
 const STAGED_META: &str = "installed_kernel.json.new";
@@ -66,6 +67,16 @@ impl KernelSource {
             Self::Sagernet => SAGERNET_RELEASES_API,
             Self::Ref1nd => REF1ND_RELEASES_API,
             Self::Lurixo => "",
+        }
+    }
+
+    /// The `owner/repo` a download for this source MUST come from — used to pin
+    /// the asset URL to the exact repository (not just the github.com host).
+    fn repo(self) -> &'static str {
+        match self {
+            Self::Lurixo => "lurixo/sing-box-releases",
+            Self::Sagernet => "SagerNet/sing-box",
+            Self::Ref1nd => "reF1nd/sing-box-releases",
         }
     }
 }
@@ -242,22 +253,39 @@ fn http_client() -> Client {
     Client::builder()
         .timeout(Duration::from_secs(180))
         .user_agent("maestro")
+        .redirect(github_redirect_policy())
         .build()
         .unwrap_or_else(|_| Client::new())
 }
 
-/// Guard the asset URL the GitHub Releases API handed us: it must point at
-/// GitHub's own download host. SagerNet/reF1nd publish no checksum file, so
-/// HTTPS-from-GitHub is the integrity boundary — this stops a tampered API
-/// response from redirecting the download to an arbitrary host.
-fn ensure_github_https(url: &str) -> Result<(), AppError> {
-    if url.starts_with("https://github.com/")
-        || url.starts_with("https://objects.githubusercontent.com/")
-    {
+/// Follow redirects only while they stay on GitHub's own hosts, so a tampered
+/// API response (or hijacked redirect) cannot bounce the download to an
+/// attacker-controlled host. Asset downloads legitimately hop
+/// github.com → objects.githubusercontent.com.
+fn github_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let host = attempt.url().host_str().unwrap_or("").to_ascii_lowercase();
+        let ok = host == "github.com" || host.ends_with(".githubusercontent.com");
+        if !ok {
+            attempt.error("redirect to a non-GitHub host")
+        } else if attempt.previous().len() > 10 {
+            attempt.error("too many redirects")
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+/// Pin a release-asset URL to the EXACT repository it must come from, not just
+/// the github.com host (which is open to anyone — host-only pinning is no
+/// integrity boundary): `https://github.com/<owner>/<repo>/releases/download/…`.
+fn ensure_release_url(url: &str, repo: &str) -> Result<(), AppError> {
+    let prefix = format!("https://github.com/{repo}/releases/download/");
+    if url.starts_with(&prefix) {
         Ok(())
     } else {
         Err(AppError::Update(
-            "refusing to download core from a non-GitHub URL".into(),
+            "refusing to download core from an unexpected URL".into(),
         ))
     }
 }
@@ -330,16 +358,42 @@ fn stage_meta(base_dir: &Path, meta: &InstalledKernel) -> Result<(), AppError> {
 // ─── apply / discard / clear (called from lib.rs command wrappers) ───────────
 
 /// Swap the staged kernel into place. The caller MUST have stopped the core
-/// first. Renames staged → live for the core binary, the lurixo build-info (if
-/// staged) and our metadata.
-pub fn apply_staged(base_dir: &Path) -> Result<(), AppError> {
+/// first. Re-verifies the staged `.new` bytes against `expected_sha` (captured
+/// at download in this elevated process's memory — a non-elevated process could
+/// have rewritten the on-disk `.new` since), then moves the live core ASIDE to
+/// `.old` (for rollback) before swapping the new one in.
+pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<(), AppError> {
     let staged = base_dir.join(STAGED_CORE);
     if !staged.exists() {
         return Err(AppError::Update("no downloaded core to apply".into()));
     }
+    if let Some(expected) = expected_sha {
+        let bytes = std::fs::read(&staged)
+            .map_err(|e| AppError::Update(format!("read staged core: {e}")))?;
+        if !sha256_hex(&bytes).eq_ignore_ascii_case(expected) {
+            let _ = std::fs::remove_file(&staged);
+            return Err(AppError::Update(
+                "staged core failed integrity check; discarded".into(),
+            ));
+        }
+    }
+
     let live = base_dir.join(CORE_FILE);
-    let _ = std::fs::remove_file(&live);
-    std::fs::rename(&staged, &live).map_err(|e| AppError::Update(format!("install core: {e}")))?;
+    let old = base_dir.join(CORE_OLD);
+    let _ = std::fs::remove_file(&old);
+    // Move the live core aside (don't delete) so a failed swap can roll back —
+    // a freshly written 30-50MB exe is a realistic AV/indexer lock target.
+    if live.exists() {
+        std::fs::rename(&live, &old)
+            .map_err(|e| AppError::Update(format!("set aside current core: {e}")))?;
+    }
+    if let Err(e) = std::fs::rename(&staged, &live) {
+        if old.exists() {
+            let _ = std::fs::rename(&old, &live); // roll back to the working core
+        }
+        return Err(AppError::Update(format!("install core: {e}")));
+    }
+    let _ = std::fs::remove_file(&old); // success → drop the backup
 
     // Remove the destination before each rename: on Windows fs::rename fails if
     // the target already exists, so a second update would otherwise silently
@@ -364,6 +418,21 @@ pub fn apply_staged(base_dir: &Path) -> Result<(), AppError> {
 /// Drop a staged-but-not-applied download (user cancelled the restart prompt).
 pub fn discard_staged(base_dir: &Path) {
     for n in [STAGED_CORE, STAGED_BUILD_INFO, STAGED_META, DOWNLOAD_TMP] {
+        let _ = std::fs::remove_file(base_dir.join(n));
+    }
+}
+
+/// Startup recovery: if a prior apply was interrupted (live core missing but a
+/// `.old` backup present) restore it, then discard any cross-session staged
+/// artifacts. A `.new` from a previous session can no longer be integrity-
+/// checked (its in-memory hash is gone), so it is dropped rather than trusted.
+pub fn cleanup_leftovers(base_dir: &Path) {
+    let live = base_dir.join(CORE_FILE);
+    let old = base_dir.join(CORE_OLD);
+    if !live.exists() && old.exists() {
+        let _ = std::fs::rename(&old, &live);
+    }
+    for n in [CORE_OLD, STAGED_CORE, STAGED_BUILD_INFO, STAGED_META, DOWNLOAD_TMP] {
         let _ = std::fs::remove_file(base_dir.join(n));
     }
 }
@@ -430,16 +499,25 @@ pub async fn check_core_update(
     let base_dir = mgr.lock().await.base_dir.clone();
     let src = current_source(&base_dir);
     let present = base_dir.join(CORE_FILE).exists();
-    let current_version = installed_kernel(&base_dir).map(|k| k.version);
+    let installed = installed_kernel(&base_dir);
+    let current_version = installed.as_ref().map(|k| k.version.clone());
+    // Switching to a different source must always offer to install it, even when
+    // its latest version isn't strictly newer than what's installed — comparing
+    // versions across sources is meaningless (e.g. SagerNet 1.13 vs lurixo 1.14).
+    let source_changed = installed
+        .as_ref()
+        .map(|k| k.source != src.as_str())
+        .unwrap_or(true);
 
     match src {
         KernelSource::Lurixo => {
             let (latest, _) = fetch_lurixo_remote().await?;
             let local = local_build_info(&base_dir);
-            let update_available = match &local {
-                Some(l) if present => lurixo_is_newer(&latest, l),
-                _ => true,
-            };
+            let update_available = source_changed
+                || match &local {
+                    Some(l) if present => lurixo_is_newer(&latest, l),
+                    _ => true,
+                };
             Ok(CoreUpdateCheck {
                 source: "lurixo".into(),
                 current_version,
@@ -452,10 +530,11 @@ pub async fn check_core_update(
             // (pre-release + latest), compared to what's installed.
             let (latest, _) = fetch_latest_release(src).await?;
             let current_semver = current_version.as_deref().and_then(parse_tag);
-            let update_available = match (present, current_semver) {
-                (true, Some(c)) => latest > c,
-                _ => true,
-            };
+            let update_available = source_changed
+                || match (present, current_semver) {
+                    (true, Some(c)) => latest > c,
+                    _ => true,
+                };
             Ok(CoreUpdateCheck {
                 source: src.as_str().into(),
                 current_version,
@@ -512,24 +591,31 @@ pub async fn download_kernel(
         KernelSource::Lurixo => {
             let (latest, raw_info) = fetch_lurixo_remote().await?;
             let url = lurixo_download_url(&latest)?;
+            ensure_release_url(&url, src.repo())?;
 
             emit_progress(&app, "downloading", &format!("Downloading {}", latest.windows_asset));
             let bytes = download_bytes(&url).await?;
 
             emit_progress(&app, "verifying", "Verifying checksum");
-            if !latest.windows_sha256.is_empty() {
-                let actual = sha256_hex(&bytes);
-                if !actual.eq_ignore_ascii_case(&latest.windows_sha256) {
-                    return Err(AppError::Update(format!(
-                        "checksum mismatch: expected {}, got {actual}",
-                        latest.windows_sha256
-                    )));
-                }
+            // lurixo is the trusted default source: a missing checksum means we
+            // cannot vouch for the bytes, so refuse rather than install blindly.
+            if latest.windows_sha256.is_empty() {
+                return Err(AppError::Update(
+                    "lurixo build-info has no sha256; refusing to update".into(),
+                ));
+            }
+            let actual = sha256_hex(&bytes);
+            if !actual.eq_ignore_ascii_case(&latest.windows_sha256) {
+                return Err(AppError::Update(format!(
+                    "checksum mismatch: expected {}, got {actual}",
+                    latest.windows_sha256
+                )));
             }
 
             emit_progress(&app, "extracting", "Extracting core");
             let core = extract_core(&bytes)?;
             stage_core(&base_dir, &core)?;
+            mgr.lock().await.staged_core_sha = Some(sha256_hex(&core));
             std::fs::write(base_dir.join(STAGED_BUILD_INFO), &raw_info)
                 .map_err(|e| AppError::Update(format!("stage build info: {e}")))?;
             stage_meta(
@@ -554,16 +640,18 @@ pub async fn download_kernel(
             let asset = pick_windows_asset(&rel)
                 .ok_or_else(|| AppError::Update("no windows-amd64 asset in latest release".into()))?;
             let (asset_name, asset_url) = (asset.name.clone(), asset.browser_download_url.clone());
-            ensure_github_https(&asset_url)?;
+            ensure_release_url(&asset_url, src.repo())?;
 
             emit_progress(&app, "downloading", &format!("Downloading {asset_name}"));
-            // No upstream checksum exists for these sources; integrity rests on
-            // the HTTPS-from-GitHub download guarded above.
+            // SagerNet/reF1nd publish no upstream checksum; integrity rests on the
+            // repository-pinned HTTPS download above plus the in-session re-verify
+            // of the staged bytes at apply time.
             let bytes = download_bytes(&asset_url).await?;
 
             emit_progress(&app, "extracting", "Extracting core");
             let core = extract_core(&bytes)?;
             stage_core(&base_dir, &core)?;
+            mgr.lock().await.staged_core_sha = Some(sha256_hex(&core));
             // These sources have no lurixo build-info; drop any stale staged one.
             let _ = std::fs::remove_file(base_dir.join(STAGED_BUILD_INFO));
             stage_meta(

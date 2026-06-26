@@ -802,7 +802,9 @@ export function Settings() {
               )}
               {t("settings.check")}
             </button>
-            {(coreCheck?.update_available || !coreInfo?.present) && (
+            {(coreCheck?.update_available ||
+              !coreInfo?.present ||
+              (coreInfo?.present && coreInfo.source !== kernelSource)) && (
               <button
                 className="fluent-btn accent reveal-target"
                 onClick={handleDownload}

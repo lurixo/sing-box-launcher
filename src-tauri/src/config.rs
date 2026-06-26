@@ -345,25 +345,38 @@ fn inject_api(config: &mut Value) -> Result<(String, String), AppError> {
         .as_object_mut()
         .ok_or_else(|| AppError::Config("api service must be a JSON object".into()))?;
 
-    let listen = api
+    let configured_listen = api
         .get("listen")
         .and_then(|v| v.as_str())
         .unwrap_or(DEFAULT_HOST)
         .to_string();
     let port = api.get("listen_port").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_PORT);
 
-    // Ensure the loopback control port is authenticated: keep a user-provided
-    // secret, otherwise generate one and inject it into the runtime config.
+    // Force the control API to loopback in the RUNTIME config — not just the
+    // host the GUI reports. A config binding 0.0.0.0/:: would otherwise expose
+    // the Bearer-authenticated control port to the LAN while the GUI still shows
+    // 127.0.0.1. If the config tried to bind non-loopback, also drop its secret
+    // and force a fresh random one (a shared config could ship a known secret
+    // for LAN-authenticated control).
+    let non_loopback = !is_loopback(&configured_listen);
+    let listen = if non_loopback {
+        api.insert("listen".into(), Value::String(DEFAULT_HOST.into()));
+        DEFAULT_HOST.to_string()
+    } else {
+        configured_listen
+    };
+
     let secret = match api.get("secret").and_then(|v| v.as_str()) {
-        Some(s) if !s.is_empty() => s.to_string(),
+        Some(s) if !s.is_empty() && !non_loopback => s.to_string(),
         _ => {
-            let s = generate_secret();
+            let s = generate_secret()?;
             api.insert("secret".into(), Value::String(s.clone()));
             s
         }
     };
 
-    let host = if listen == "0.0.0.0" || listen == "::" { DEFAULT_HOST } else { &listen };
+    // Bracket an IPv6 loopback so the connect address parses ("[::1]:9090").
+    let host = if listen == "::1" { "[::1]".to_string() } else { listen };
     Ok((format!("{host}:{port}"), secret))
 }
 
@@ -404,21 +417,25 @@ fn inject_log_level(config: &mut Value, level: &str) {
     }
 }
 
-/// Generate a random 128-bit hex token for the native API secret.
-fn generate_secret() -> String {
+/// Generate a random 128-bit hex token for the native API secret. Fails closed:
+/// if the OS RNG is unavailable we refuse rather than fall back to a predictable
+/// time/pid-derived value (the secret guards the local control API).
+fn generate_secret() -> Result<String, AppError> {
     let mut bytes = [0u8; 16];
-    if getrandom::fill(&mut bytes).is_err() {
-        use sha2::{Digest, Sha256};
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let mut h = Sha256::new();
-        h.update(nanos.to_le_bytes());
-        h.update(std::process::id().to_le_bytes());
-        bytes.copy_from_slice(&h.finalize()[..16]);
-    }
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    getrandom::fill(&mut bytes)
+        .map_err(|e| AppError::Config(format!("secure RNG unavailable for API secret: {e}")))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Whether an API listen address is a loopback address (safe to expose only the
+/// local control port). Anything else (0.0.0.0, ::, a LAN IP) is treated as a
+/// non-loopback bind that must be forced back to loopback.
+fn is_loopback(host: &str) -> bool {
+    host.is_empty()
+        || host == "localhost"
+        || host == "::1"
+        || host == "[::1]"
+        || host.starts_with("127.")
 }
 
 /// Find the first HTTP/SOCKS/mixed inbound -> "host:port"

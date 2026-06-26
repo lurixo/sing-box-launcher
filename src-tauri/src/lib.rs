@@ -375,6 +375,7 @@ async fn apply_staged_kernel(
 ) -> Result<(), AppError> {
     let was_running = {
         let mut m = mgr.lock().await;
+        m.refresh_running();
         let running = m.running;
         if m.proxy_enabled {
             m.proxy_enabled = false;
@@ -384,7 +385,9 @@ async fn apply_staged_kernel(
             m.stop().await?;
         }
         grp.lock().await.clear();
-        core_update::apply_staged(&m.base_dir)?;
+        let expected = m.staged_core_sha.clone();
+        core_update::apply_staged(&m.base_dir, expected.as_deref())?;
+        m.staged_core_sha = None;
         running
     };
 
@@ -432,8 +435,12 @@ async fn apply_app_update(
     mgr: tauri::State<'_, manager::Manager>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    let base_dir = mgr.lock().await.base_dir.clone();
-    app_update::apply_staged(&base_dir)?;
+    let (base_dir, expected) = {
+        let m = mgr.lock().await;
+        (m.base_dir.clone(), m.staged_app_sha.clone())
+    };
+    app_update::apply_staged(&base_dir, expected.as_deref())?;
+    mgr.lock().await.staged_app_sha = None;
     // New exe is in place and a relauncher is waiting on our exit; quit now
     // (honoring exit-core-on-close) so it can bring the new version up.
     shutdown_and_exit(&app);
@@ -496,8 +503,10 @@ pub fn run() {
     let data_dir = manager::data_dir();
     let _ = std::fs::create_dir_all(&data_dir);
     migrate_legacy_layout(&manager::resolve_base_dir(), &data_dir);
-    // Drop a leftover <exe>.old from a completed self-update.
-    app_update::cleanup_leftovers();
+    // Recover from an interrupted apply and drop cross-session staged artifacts
+    // (a `.new` from a previous session can no longer be integrity-verified).
+    app_update::cleanup_leftovers(&data_dir);
+    core_update::cleanup_leftovers(&data_dir);
 
     let dl = open_debug_log();
     dlog(&dl, &format!("=== Maestro starting (pid {}) ===", std::process::id()));

@@ -33,6 +33,12 @@ pub struct ManagerInner {
     /// Bumped on every successful start so per-session background tasks (e.g.
     /// the metrics stream) can detect a restart and exit.
     pub generation: u64,
+    /// sha256 of the staged core/app binary, captured at download time. Held in
+    /// this (elevated) process's memory — not on disk where a non-elevated
+    /// process could rewrite it — so apply can re-verify the staged `.new`
+    /// bytes before swapping them into an admin-executed binary.
+    pub staged_core_sha: Option<String>,
+    pub staged_app_sha: Option<String>,
     started_at: Option<std::time::Instant>,
     logbus: LogBus,
 }
@@ -49,6 +55,8 @@ pub fn new_manager(base_dir: PathBuf, logbus: LogBus) -> Manager {
         api_secret: String::new(),
         proxy_enabled: false,
         generation: 0,
+        staged_core_sha: None,
+        staged_app_sha: None,
         started_at: None,
         logbus,
     }))
