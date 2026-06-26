@@ -110,7 +110,7 @@ function OutboundIpCard() {
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {lines.map((info) => (
             <div key={info.ip} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <span style={{ fontSize: 18, flexShrink: 0 }}>{countryCodeToFlag(info.country)}</span>
+              <span style={{ fontSize: 18, flexShrink: 0, fontFamily: "'Twemoji Country Flags', 'Segoe UI Emoji', sans-serif" }}>{countryCodeToFlag(info.country)}</span>
               {info.asn && (
                 <button onClick={() => copy(`${info.ip}:asn`, info.asn)} title={info.asn} style={ipTokenStyle}>
                   {info.asn}

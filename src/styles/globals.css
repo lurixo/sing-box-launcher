@@ -12,6 +12,16 @@
   --radius-lg: 12px;
 }
 
+/* Bundled Twemoji (mozilla/twemoji-colr) flags subset — Segoe UI Emoji on
+   Windows does not render country-flag glyphs, so ship our own. The
+   unicode-range scopes it strictly to regional-indicator code points. */
+@font-face {
+  font-family: "Twemoji Country Flags";
+  src: url("/fonts/TwemojiCountryFlags.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+1F1E6-1F1FF;
+}
+
 :root {
   --accent-default: #0078D4;
   --accent-light-1: #1a8ae6;
