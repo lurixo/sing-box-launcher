@@ -279,9 +279,24 @@ fn github_redirect_policy() -> reqwest::redirect::Policy {
 /// Pin a release-asset URL to the EXACT repository it must come from, not just
 /// the github.com host (which is open to anyone — host-only pinning is no
 /// integrity boundary): `https://github.com/<owner>/<repo>/releases/download/…`.
+///
+/// Validation runs on the PARSED URL, not the raw string. A raw `starts_with`
+/// check can be defeated by `…/<repo>/releases/download/v1/../../../attacker/…`
+/// which begins with the prefix yet, once reqwest applies WHATWG path
+/// normalization (collapsing `..`/`.` segments, including their percent-encoded
+/// and backslash forms), actually resolves to a different repo. We parse with
+/// the same `url` crate reqwest uses, so the host + normalized path we check are
+/// exactly what will be requested.
 fn ensure_release_url(url: &str, repo: &str) -> Result<(), AppError> {
-    let prefix = format!("https://github.com/{repo}/releases/download/");
-    if url.starts_with(&prefix) {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| AppError::Update("refusing to download core from an unparsable URL".into()))?;
+    let host_ok = parsed.scheme() == "https"
+        && parsed
+            .host_str()
+            .map(|h| h.eq_ignore_ascii_case("github.com"))
+            .unwrap_or(false);
+    let expected = format!("/{repo}/releases/download/");
+    if host_ok && parsed.path().starts_with(&expected) {
         Ok(())
     } else {
         Err(AppError::Update(

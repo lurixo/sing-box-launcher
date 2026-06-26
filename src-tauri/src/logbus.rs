@@ -126,14 +126,19 @@ pub fn export_logs(
     }
     let mut out = String::with_capacity(lines.len() * 80);
     out.push_str("# Maestro log export\n");
+    out.push_str("# secrets/credentials best-effort redacted; may still contain visited destinations\n");
     for l in &lines {
-        out.push_str(&format!(
-            "{} [{:<5}] {}: {}\n",
+        // Same scrubbing as the crash dump: never write the API secret or known
+        // credential fields into a file the user is about to share.
+        let line = format!(
+            "{} [{:<5}] {}: {}",
             fmt_utc(l.ts),
             l.level.to_uppercase(),
             l.source,
             l.message
-        ));
+        );
+        out.push_str(&crate::crash::redact_line(&line));
+        out.push('\n');
     }
     std::fs::write(&dest, out).map_err(|e| AppError::Other(format!("write export: {e}")))?;
     Ok(lines.len())

@@ -168,6 +168,16 @@ fn app_build_info(base_dir: &Path) -> (String, String) {
 
 // ─── redaction ───────────────────────────────────────────────────────────────
 
+/// Redact a single line with the same rules as the crash dump (the current core
+/// API secret + known credential fields). Public so the log export applies the
+/// identical scrubbing before any line leaves memory into a user-chosen file.
+pub fn redact_line(line: &str) -> String {
+    let secret = STATE
+        .get()
+        .and_then(|st| st.secret.lock().ok().and_then(|g| g.clone()));
+    redact(line, secret.as_deref())
+}
+
 fn redact(line: &str, secret: Option<&str>) -> String {
     let mut s = line.to_string();
     if let Some(sec) = secret {
