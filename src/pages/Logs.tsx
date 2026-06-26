@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DeleteRegular } from "@fluentui/react-icons";
+import { ArrowDownloadRegular, DeleteRegular } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
 import type { AppSettings, LogLine } from "../types";
@@ -44,6 +45,10 @@ export function Logs() {
   const [source, setSource] = useState<"core" | "app">("core");
   const [minLevel, setMinLevel] = useState<Level>("info");
   const [autoScroll, setAutoScroll] = useState(true);
+  // Per-entry export selection, keyed by the line's seq so it survives buffer
+  // scroll-off (lines that roll out of the buffer are simply skipped on export).
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [exportMsg, setExportMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Seed the display filter from the persisted preference. The core always logs
@@ -126,6 +131,47 @@ export function Logs() {
       /* noop */
     }
     setLines([]);
+    setSelected(new Set());
+    setExportMsg(null);
+  };
+
+  const allVisibleSelected = visible.length > 0 && visible.every((l) => selected.has(l.seq));
+
+  const toggleOne = (seq: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(seq)) next.delete(seq);
+      else next.add(seq);
+      return next;
+    });
+
+  const toggleAllVisible = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (visible.every((l) => next.has(l.seq))) {
+        for (const l of visible) next.delete(l.seq);
+      } else {
+        for (const l of visible) next.add(l.seq);
+      }
+      return next;
+    });
+
+  // Export the selected entries to a user-chosen text file. The save dialog
+  // picks the path; the backend writes only the lines whose seq is selected.
+  const handleExport = async () => {
+    const seqs = [...selected];
+    if (seqs.length === 0) return;
+    try {
+      const path = await save({
+        defaultPath: "maestro-logs.txt",
+        filters: [{ name: "Text", extensions: ["txt"] }],
+      });
+      if (!path) return; // user cancelled
+      const n = await invoke<number>("export_logs", { seqs, dest: path });
+      setExportMsg({ ok: true, text: t("logs.exportDone", { count: n }) });
+    } catch {
+      setExportMsg({ ok: false, text: t("logs.exportFailed") });
+    }
   };
 
   const tabBtn = (id: "core" | "app", label: string) => (
@@ -178,9 +224,32 @@ export function Logs() {
           {t("logs.autoScroll")}
         </label>
 
+        <label
+          style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: visible.length ? "pointer" : "default", opacity: visible.length ? 1 : 0.5 }}
+          title={t("logs.selectAllHint")}
+        >
+          <input
+            type="checkbox"
+            checked={allVisibleSelected}
+            disabled={visible.length === 0}
+            onChange={toggleAllVisible}
+          />
+          {t("logs.selectAll")}
+        </label>
+
         <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginLeft: "auto" }}>
           {t("logs.count", { count: visible.length })}
         </span>
+        <button
+          className="fluent-btn reveal-target"
+          onClick={handleExport}
+          disabled={selected.size === 0}
+          title={t("logs.exportHint")}
+          style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", opacity: selected.size === 0 ? 0.5 : 1 }}
+        >
+          <ArrowDownloadRegular style={{ fontSize: 14 }} />
+          {selected.size ? t("logs.exportN", { count: selected.size }) : t("logs.export")}
+        </button>
         <button
           className="fluent-btn reveal-target"
           onClick={handleClear}
@@ -190,6 +259,18 @@ export function Logs() {
           {t("logs.clear")}
         </button>
       </div>
+
+      {exportMsg && (
+        <div
+          className="infobar"
+          style={{
+            background: exportMsg.ok ? "var(--status-success-bg)" : "var(--status-danger-bg)",
+            borderColor: exportMsg.ok ? "var(--status-success)" : "var(--status-danger)",
+          }}
+        >
+          {exportMsg.text}
+        </div>
+      )}
 
       {/* Log view */}
       <div
@@ -207,7 +288,14 @@ export function Logs() {
           </div>
         ) : (
           visible.map((l) => (
-            <div key={l.seq} style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            <div key={l.seq} style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
+              <input
+                type="checkbox"
+                checked={selected.has(l.seq)}
+                onChange={() => toggleOne(l.seq)}
+                style={{ flexShrink: 0, marginTop: 3, cursor: "pointer" }}
+                aria-label={t("logs.selectLine")}
+              />
               <span style={{ color: "var(--text-tertiary)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
                 {fmtTime(l.ts)}
               </span>

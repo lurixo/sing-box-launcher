@@ -122,9 +122,6 @@ export function Settings() {
   const [autoStartCore, setAutoStartCore] = useState(true);
   const [startupDelay, setStartupDelay] = useState(30);
 
-  // ─── Log state ───────────────────────────────────────────────────
-  const [logPersist, setLogPersist] = useState(false);
-
   // ─── UWP state ───────────────────────────────────────────────────
   const [uwpLoading, setUwpLoading] = useState(false);
   const [uwpResult, setUwpResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -163,7 +160,6 @@ export function Settings() {
         const settings = await invoke<AppSettings>("get_settings");
         setSilentStart(settings.silent_start);
         setRunAsAdmin(settings.run_as_admin);
-        setLogPersist(settings.log_persist);
         setAllowMultiple(settings.allow_multiple);
         setCloseToTray(settings.close_to_tray);
         setExitCoreOnClose(settings.exit_core_on_close);
@@ -182,15 +178,6 @@ export function Settings() {
     try {
       await invoke("set_run_as_admin", { enabled: val });
       setRunAsAdmin(val);
-    } catch (e) {
-      setGenErr(String(e));
-    }
-  };
-
-  const handleLogPersist = async (val: boolean) => {
-    try {
-      await invoke("set_log_persist", { enabled: val });
-      setLogPersist(val);
     } catch (e) {
       setGenErr(String(e));
     }
@@ -401,6 +388,17 @@ export function Settings() {
     setAppBusy(false);
   };
 
+  // Installed (NSIS) builds update by downloading a fresh installer, not by the
+  // portable in-place self-swap (which would desync the install). Send the user
+  // to the releases page instead.
+  const handleOpenReleases = async () => {
+    try {
+      await invoke("open_releases_page");
+    } catch (e) {
+      setAppMsg({ type: "err", text: String(e) });
+    }
+  };
+
   // Confirm → swap exe + relaunch. The app exits as part of this call, so there
   // is nothing to await meaningfully; we just fire it.
   const handleApplyApp = async () => {
@@ -607,16 +605,9 @@ export function Settings() {
 
       {/* ─── Logs ─── */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("settings.logs")}</div>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0" }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.logPersist")}</div>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-              {t("settings.logPersistDesc")}
-            </div>
-          </div>
-          <ToggleSwitch checked={logPersist} onChange={handleLogPersist} />
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{t("settings.logs")}</div>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+          {t("settings.logStorageDesc")}
         </div>
       </div>
 
@@ -910,7 +901,18 @@ export function Settings() {
               )}
               {t("settings.check")}
             </button>
-            {appCheck?.update_available && (
+            {appCheck?.update_available && appCheck.installed && (
+              <button
+                className="fluent-btn accent reveal-target"
+                onClick={handleOpenReleases}
+                style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+                title={t("settings.appUpdateInstalledHint")}
+              >
+                <ArrowDownloadRegular style={{ fontSize: 14 }} />
+                {t("settings.appUpdateOpenReleases")}
+              </button>
+            )}
+            {appCheck?.update_available && !appCheck.installed && (
               <button
                 className="fluent-btn accent reveal-target"
                 onClick={handleDownloadApp}

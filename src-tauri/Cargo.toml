@@ -27,6 +27,9 @@ protoc-bin-vendored = "3.2"
 tauri = { version = "2.11", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.5"
 tauri-plugin-single-instance = "2.4"
+# Native save dialog for the log export feature (per-entry export to a
+# user-chosen path).
+tauri-plugin-dialog = "2.7"
 tokio = { version = "1.52", features = ["full"] }
 reqwest = { version = "0.13", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }

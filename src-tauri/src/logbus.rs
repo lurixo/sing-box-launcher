@@ -1,8 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+
+use crate::error::AppError;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
@@ -100,11 +102,69 @@ pub fn clear_logs(bus: tauri::State<'_, LogBus>) {
     bus.clear();
 }
 
+/// Export the chosen log lines (by `seq`) from the in-memory buffer to a
+/// user-picked file as plain text. The path comes from the frontend save
+/// dialog; lines not in `seqs` are skipped, so the user controls exactly which
+/// entries leave memory. Returns how many lines were written.
+#[tauri::command]
+pub fn export_logs(
+    bus: tauri::State<'_, LogBus>,
+    seqs: Vec<u64>,
+    dest: String,
+) -> Result<usize, AppError> {
+    if dest.trim().is_empty() {
+        return Err(AppError::Other("no export path provided".into()));
+    }
+    let wanted: HashSet<u64> = seqs.into_iter().collect();
+    let lines: Vec<LogLine> = bus
+        .snapshot()
+        .into_iter()
+        .filter(|l| wanted.contains(&l.seq))
+        .collect();
+    if lines.is_empty() {
+        return Err(AppError::Other("no matching log lines to export".into()));
+    }
+    let mut out = String::with_capacity(lines.len() * 80);
+    out.push_str("# Maestro log export\n");
+    for l in &lines {
+        out.push_str(&format!(
+            "{} [{:<5}] {}: {}\n",
+            fmt_utc(l.ts),
+            l.level.to_uppercase(),
+            l.source,
+            l.message
+        ));
+    }
+    std::fs::write(&dest, out).map_err(|e| AppError::Other(format!("write export: {e}")))?;
+    Ok(lines.len())
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Format unix-millis as `YYYY-MM-DD HH:MM:SS UTC` without a date dependency
+/// (Howard Hinnant's civil-from-days algorithm). Used by log export and the
+/// crash dump so timestamps are stable and timezone-unambiguous.
+pub fn fmt_utc(ms: u64) -> String {
+    let secs = (ms / 1000) as i64;
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    let (h, mi, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if m <= 2 { y + 1 } else { y };
+    format!("{year:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02} UTC")
 }
 
 fn normalize_level(level: &str) -> &'static str {
@@ -114,18 +174,6 @@ fn normalize_level(level: &str) -> &'static str {
         "warn" | "warning" => "warn",
         "error" | "err" | "fatal" | "panic" => "error",
         _ => "info",
-    }
-}
-
-/// Numeric severity rank: trace=0 (lowest) … error=4 (highest). Used for both
-/// the GUI display filter and the on-disk persistence threshold.
-pub fn level_rank(level: &str) -> u8 {
-    match normalize_level(level) {
-        "trace" => 0,
-        "debug" => 1,
-        "warn" => 3,
-        "error" => 4,
-        _ => 2, // info
     }
 }
 

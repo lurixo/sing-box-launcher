@@ -49,9 +49,6 @@ pub struct AppSettings {
     pub run_as_admin: bool,
     #[serde(default = "default_log_level")]
     pub log_level: String,
-    /// Persist core logs to sing-box.log. Default: on.
-    #[serde(default = "default_true")]
-    pub log_persist: bool,
     #[serde(default = "default_lang")]
     pub lang: String,
     /// Allow more than one instance to run at once. Default: single instance.
@@ -86,7 +83,6 @@ impl Default for AppSettings {
             active_config: "default".into(),
             run_as_admin: true,
             log_level: default_log_level(),
-            log_persist: true,
             lang: default_lang(),
             allow_multiple: false,
             close_to_tray: true,
@@ -169,17 +165,6 @@ pub async fn set_log_level(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.log_level = level;
-    save_settings(&mgr.base_dir, &settings)
-}
-
-#[tauri::command]
-pub async fn set_log_persist(
-    mgr: tauri::State<'_, crate::manager::Manager>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    let mgr = mgr.lock().await;
-    let mut settings = load_settings(&mgr.base_dir);
-    settings.log_persist = enabled;
     save_settings(&mgr.base_dir, &settings)
 }
 

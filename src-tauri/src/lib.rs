@@ -3,6 +3,7 @@ mod accent;
 mod app_update;
 mod config;
 mod core_update;
+mod crash;
 mod elevation;
 mod error;
 mod groups;
@@ -483,7 +484,6 @@ fn migrate_legacy_layout(exe_dir: &std::path::Path, data_dir: &std::path::Path) 
         "cache.db",
         "config_runtime.json",
         "launcher-debug.log",
-        "sing-box.log",
         "sing-box.exe",
         "EnableLoopback.exe",
         "singbox-build-info.json",
@@ -498,6 +498,15 @@ fn migrate_legacy_layout(exe_dir: &std::path::Path, data_dir: &std::path::Path) 
     }
 }
 
+/// Remove core logs left on disk by older builds that persisted them. Logs are
+/// now kept only in memory, so any `sing-box.log`(+rotated `.1`/`.2`) is stale
+/// and may contain prior-session network destinations — drop it on startup.
+fn purge_stale_core_logs(dir: &std::path::Path) {
+    for name in ["sing-box.log", "sing-box.log.1", "sing-box.log.2"] {
+        let _ = std::fs::remove_file(dir.join(name));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let data_dir = manager::data_dir();
@@ -507,6 +516,12 @@ pub fn run() {
     // (a `.new` from a previous session can no longer be integrity-verified).
     app_update::cleanup_leftovers(&data_dir);
     core_update::cleanup_leftovers(&data_dir);
+    // Purge stale on-disk core logs from both the data dir and the legacy
+    // flat-layout location (next to the exe), where pre-data/-layout builds
+    // wrote them. A direct upgrade from a flat build is the common path, so the
+    // old sing-box.log(+rotations) must be cleaned there too — not just migrated.
+    purge_stale_core_logs(&data_dir);
+    purge_stale_core_logs(&manager::resolve_base_dir());
 
     let dl = open_debug_log();
     dlog(&dl, &format!("=== Maestro starting (pid {}) ===", std::process::id()));
@@ -526,6 +541,9 @@ pub fn run() {
 
     let base_dir = data_dir;
     config::ensure_configs_dir(&base_dir);
+    // Install the crash handler (panic hook + dump context) before the app is
+    // built, so a panic anywhere in setup is captured.
+    crash::install(base_dir.clone(), logbus.clone());
     dlog(&dl, &format!("base_dir = {}", base_dir.display()));
     info!(base_dir = %base_dir.display(), "starting Maestro");
 
@@ -581,6 +599,7 @@ pub fn run() {
         }));
     }
     builder
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             // Marker arg so the app can detect a boot/autostart launch and apply
@@ -620,7 +639,6 @@ pub fn run() {
             settings::set_active_config,
             settings::set_run_as_admin,
             settings::set_log_level,
-            settings::set_log_persist,
             settings::set_lang,
             settings::set_allow_multiple,
             settings::set_close_to_tray,
@@ -631,6 +649,7 @@ pub fn run() {
             settings::set_kernel_source,
             logbus::get_logs,
             logbus::clear_logs,
+            logbus::export_logs,
             proxy::enable_uwp_loopback,
             core_update::get_core_info,
             core_update::check_core_update,
@@ -644,12 +663,15 @@ pub fn run() {
             app_update::download_app_update,
             app_update::get_staged_app_update,
             app_update::discard_app_update,
+            app_update::open_releases_page,
             apply_app_update,
             elevation::is_admin,
         ])
         .setup(move |app| {
             dlog(&dl_setup, "setup: entering closure");
             logbus_setup.attach(app.handle().clone());
+            // Surface a crash dump captured in a previous session (if any).
+            crash::surface_pending();
 
             match tray::setup_tray(app.handle()) {
                 Ok(_) => dlog(&dl_setup, "setup: tray OK"),

@@ -24,7 +24,6 @@ export interface AppSettings {
   active_config: string;
   run_as_admin: boolean;
   log_level: string;
-  log_persist: boolean;
   lang: string;
   allow_multiple: boolean;
   close_to_tray: boolean;
@@ -121,6 +120,7 @@ export interface AppUpdateCheck {
   latest_version: string;
   latest_built_at: string;
   update_available: boolean;
+  installed: boolean;
 }
 
 export interface StagedApp {

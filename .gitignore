@@ -24,3 +24,10 @@ Thumbs.db
 # Runtime config (generated)
 config_runtime.json
 cache.db
+
+# Installer resources staged by the release workflow (EnableLoopback.exe is the
+# only committed resource; the rest are fetched/generated in CI).
+src-tauri/resources/sing-box.exe
+src-tauri/resources/singbox-build-info.json
+src-tauri/resources/maestro-build-info.json
+src-tauri/resources/CHANNEL

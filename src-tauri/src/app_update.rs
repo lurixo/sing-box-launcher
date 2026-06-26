@@ -29,6 +29,23 @@ const BUILD_INFO_FILE: &str = "maestro-build-info.json";
 const APP_EXE: &str = "Maestro.exe";
 /// Staged-but-not-applied build-info (next to the live one in base_dir).
 const STAGED_BUILD_INFO: &str = "maestro-build-info.json.new";
+/// Distribution-channel marker bundled into the data dir. Only the NSIS
+/// installer ships it (contents "installer"); the portable build has none.
+const CHANNEL_FILE: &str = "CHANNEL";
+/// Releases page opened for installed builds (they update via a new installer,
+/// not the portable in-place swap).
+const RELEASES_PAGE: &str = "https://github.com/lurixo/Maestro/releases/latest";
+
+/// True when this build was installed via the NSIS installer rather than run
+/// from the portable zip. Installed builds must NOT self-update by swapping the
+/// exe in place — that would desync the installer's uninstall registration and
+/// leave a portable binary inside a tracked install. They update by downloading
+/// a fresh installer instead.
+pub fn is_installed(base_dir: &Path) -> bool {
+    std::fs::read_to_string(base_dir.join(CHANNEL_FILE))
+        .map(|s| s.trim().eq_ignore_ascii_case("installer"))
+        .unwrap_or(false)
+}
 
 /// Build metadata for the app, mirroring singbox-build-info.json's schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +243,13 @@ fn with_suffix(p: &Path, suffix: &str) -> PathBuf {
 /// renaming a running exe (it just can't be deleted/overwritten), so we move
 /// the live exe aside (.old, cleaned next launch) and the staged one in.
 pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<(), AppError> {
+    if is_installed(base_dir) {
+        return Err(AppError::Update(
+            "this is an installed build — update it by downloading the latest installer from \
+             the GitHub releases page, not the portable self-updater"
+                .into(),
+        ));
+    }
     let cur = std::env::current_exe().map_err(|e| AppError::Update(format!("current exe: {e}")))?;
     let staged = with_suffix(&cur, ".new");
     if !staged.exists() {
@@ -336,6 +360,9 @@ pub struct AppUpdateCheck {
     pub latest_version: String,
     pub latest_built_at: String,
     pub update_available: bool,
+    /// Installed (NSIS) build: the UI points the user at the installer download
+    /// instead of the portable in-place self-update.
+    pub installed: bool,
 }
 
 #[tauri::command]
@@ -355,7 +382,27 @@ pub async fn check_app_update(
         latest_version: remote.version,
         latest_built_at: remote.built_at,
         update_available,
+        installed: is_installed(&base_dir),
     })
+}
+
+/// Open the GitHub releases page in the default browser — used by installed
+/// builds, which update via a new installer rather than the in-place swap.
+#[tauri::command]
+pub fn open_releases_page() -> Result<(), AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        // `cmd /C start "" <url>` hands the URL to the default browser. The empty
+        // "" is start's window-title argument so the URL isn't consumed as one.
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", RELEASES_PAGE])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| AppError::Update(format!("open releases page: {e}")))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]

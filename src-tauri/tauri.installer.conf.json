@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "bundle": {
+    "active": true,
+    "resources": {
+      "resources/sing-box.exe": "data/sing-box.exe",
+      "resources/EnableLoopback.exe": "data/EnableLoopback.exe",
+      "resources/singbox-build-info.json": "data/singbox-build-info.json",
+      "resources/maestro-build-info.json": "data/maestro-build-info.json",
+      "resources/CHANNEL": "data/CHANNEL"
+    }
+  }
+}

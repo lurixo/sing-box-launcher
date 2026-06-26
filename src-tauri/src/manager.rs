@@ -98,26 +98,14 @@ impl ManagerInner {
         self.validate_files(&config_name)?;
 
         // The core always runs at trace (full detail) via a non-destructive
-        // runtime override; the GUI filters the view and the on-disk log is
-        // filtered to the selected level (below). configs/<name>.json is untouched.
+        // runtime override; the GUI filters the view. Log lines are kept only in
+        // the in-memory bus and never written to disk. configs/<name>.json is
+        // untouched.
         let info =
             config::prepare_runtime_config(&self.base_dir, &config_name, "trace")?;
 
         let runtime_path = self.base_dir.join("config_runtime.json");
         let sb_path = self.base_dir.join("sing-box.exe");
-        let log_path = self.base_dir.join("sing-box.log");
-
-        // Persist core logs to a rotating file only when requested. Lines are
-        // filtered to the selected display level (captured here at start) so the
-        // always-trace core doesn't flood the disk.
-        let persist_file = if settings.log_persist {
-            RotatingLog::open(log_path.clone())
-                .ok()
-                .map(|r| Arc::new(std::sync::Mutex::new(r)))
-        } else {
-            None
-        };
-        let persist_min_rank = logbus::level_rank(&settings.log_level);
 
         let mut child = build_command(&sb_path, &runtime_path, &self.base_dir)
             .stdout(std::process::Stdio::piped())
@@ -127,10 +115,10 @@ impl ManagerInner {
             .map_err(|e| AppError::Process(format!("spawn sing-box: {e}")))?;
 
         if let Some(out) = child.stdout.take() {
-            spawn_reader(out, self.logbus.clone(), persist_file.clone(), persist_min_rank);
+            spawn_reader(out, self.logbus.clone());
         }
         if let Some(err) = child.stderr.take() {
-            spawn_reader(err, self.logbus.clone(), persist_file.clone(), persist_min_rank);
+            spawn_reader(err, self.logbus.clone());
         }
 
         // Catch configs that make sing-box exit immediately on startup.
@@ -155,6 +143,9 @@ impl ManagerInner {
         self.proxy_server = info.proxy_server.clone();
         self.api_address = info.api_address.clone();
         self.api_secret = info.api_secret.clone();
+        // Hand the live secret to the crash handler so it can be scrubbed from
+        // any dump (panic / unexpected core exit) written while the core runs.
+        crate::crash::set_secret(Some(self.api_secret.clone()));
         self.started_at = Some(std::time::Instant::now());
 
         info!(
@@ -177,6 +168,12 @@ impl ManagerInner {
         if let Some(child) = self.child.as_mut() {
             if let Ok(Some(st)) = child.try_wait() {
                 warn!(code = ?st.code(), "sing-box exited unexpectedly");
+                // A core that dies on its own (not via stop()) is a crash worth a
+                // one-shot dump for bug reports.
+                crate::crash::report(&format!(
+                    "sing-box core exited unexpectedly (code {:?})",
+                    st.code()
+                ));
                 self.child = None;
                 self.running = false;
                 self.started_at = None;
@@ -295,74 +292,16 @@ fn build_command(sb_path: &Path, runtime_path: &Path, base_dir: &Path) -> Comman
     cmd
 }
 
-/// Size of the active core-log file before it rotates.
-const ROTATE_BYTES: u64 = 8 * 1024 * 1024;
-
-/// A core-log file with size-based rotation: when the active file reaches
-/// `ROTATE_BYTES` it is rolled to `.1`/`.2` (oldest dropped) and reopened, so
-/// the on-disk log is bounded to ~`ROTATE_BYTES * 3` (active + two backups).
-struct RotatingLog {
-    path: PathBuf,
-    file: std::fs::File,
-    written: u64,
-}
-
-impl RotatingLog {
-    fn open(path: PathBuf) -> std::io::Result<Self> {
-        let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
-        let written = file.metadata().map(|m| m.len()).unwrap_or(0);
-        Ok(Self { path, file, written })
-    }
-
-    fn numbered(&self, n: u8) -> PathBuf {
-        let mut s = self.path.clone().into_os_string();
-        s.push(format!(".{n}"));
-        PathBuf::from(s)
-    }
-
-    fn rotate(&mut self) {
-        // Keep two rotated backups: .1 -> .2 (drops old .2), active -> .1, fresh active.
-        let _ = std::fs::rename(self.numbered(1), self.numbered(2));
-        let _ = std::fs::rename(&self.path, self.numbered(1));
-        if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.path) {
-            self.file = f;
-            self.written = 0;
-        }
-    }
-
-    fn write_line(&mut self, line: &str) {
-        if self.written >= ROTATE_BYTES {
-            self.rotate();
-        }
-        use std::io::Write;
-        if writeln!(self.file, "{line}").is_ok() {
-            self.written += line.len() as u64 + 1;
-        }
-    }
-}
-
-/// Read core lines from a process pipe, persisting (filtered to `persist_min_rank`
-/// and rotated) and forwarding each to the bus.
-fn spawn_reader<R>(
-    reader: R,
-    bus: LogBus,
-    persist: Option<Arc<std::sync::Mutex<RotatingLog>>>,
-    persist_min_rank: u8,
-) where
+/// Read core lines from a process pipe and forward each to the in-memory bus.
+/// Nothing is written to disk — the bus is the only log sink.
+fn spawn_reader<R>(reader: R, bus: LogBus)
+where
     R: AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             let level = logbus::parse_core_level(&line);
-            // Persist only lines at/above the selected level (the core is at trace).
-            if let Some(f) = &persist {
-                if logbus::level_rank(level) >= persist_min_rank {
-                    if let Ok(mut f) = f.lock() {
-                        f.write_line(&line);
-                    }
-                }
-            }
             bus.push("core", level, line);
         }
     });

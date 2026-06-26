@@ -100,6 +100,14 @@ export const en = {
   "logs.autoScroll": "Auto-scroll",
   "logs.empty": "No logs yet.",
   "logs.count": "{count} lines",
+  "logs.selectAll": "Select all",
+  "logs.selectAllHint": "Select every line currently shown.",
+  "logs.selectLine": "Select line",
+  "logs.export": "Export",
+  "logs.exportN": "Export ({count})",
+  "logs.exportHint": "Save the selected lines to a text file.",
+  "logs.exportDone": "Exported {count} lines.",
+  "logs.exportFailed": "Export failed.",
 
   "settings.title": "Settings",
   "settings.general": "General",
@@ -124,8 +132,7 @@ export const en = {
   "settings.uwpLoopbackDesc": "Launch loopback tool so UWP apps can use the local proxy",
   "settings.openTool": "Open Tool",
   "settings.logs": "Logs",
-  "settings.logPersist": "Save logs to file",
-  "settings.logPersistDesc": "Append core logs to sing-box.log for later inspection.",
+  "settings.logStorageDesc": "Logs are kept in memory only and are never written to disk. Open the Logs page to view them live, or to select lines and export them to a file. A one-time, redacted crash dump is written only if Maestro or the core crashes.",
   "settings.appearance": "Appearance",
   "settings.theme": "Theme",
   "settings.themeLight": "Light",
@@ -178,6 +185,8 @@ export const en = {
   "settings.appUpdateApplyBody": "Maestro {version} has been downloaded. Restart now to apply? The app will close and reopen.",
   "settings.appUpdateApplyConfirm": "Restart & update",
   "settings.appUpdateApplied": "Applying update — Maestro will restart…",
+  "settings.appUpdateOpenReleases": "Get installer",
+  "settings.appUpdateInstalledHint": "This is an installed build — download and run the new installer from the releases page.",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -282,6 +291,14 @@ export const zhCN: Record<TranslationKey, string> = {
   "logs.autoScroll": "自动滚动",
   "logs.empty": "暂无日志。",
   "logs.count": "{count} 行",
+  "logs.selectAll": "全选",
+  "logs.selectAllHint": "选中当前显示的所有日志行。",
+  "logs.selectLine": "选择此行",
+  "logs.export": "导出",
+  "logs.exportN": "导出（{count}）",
+  "logs.exportHint": "将选中的日志行保存为文本文件。",
+  "logs.exportDone": "已导出 {count} 行。",
+  "logs.exportFailed": "导出失败。",
 
   "settings.title": "设置",
   "settings.general": "通用",
@@ -306,8 +323,7 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.uwpLoopbackDesc": "启动回环工具，让 UWP 应用可以使用本地代理",
   "settings.openTool": "打开工具",
   "settings.logs": "日志",
-  "settings.logPersist": "保存日志到文件",
-  "settings.logPersistDesc": "将内核日志追加写入 sing-box.log，便于事后排查。",
+  "settings.logStorageDesc": "日志仅保存在内存中，不会写入磁盘。可在「日志」页实时查看，或勾选若干行导出到文件。仅当 Maestro 或内核崩溃时，才会写入一次性、已脱敏的崩溃转储。",
   "settings.appearance": "外观",
   "settings.theme": "主题",
   "settings.themeLight": "浅色",
@@ -360,6 +376,8 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.appUpdateApplyBody": "Maestro {version} 已下载完成。现在重启以应用吗？应用将关闭并重新打开。",
   "settings.appUpdateApplyConfirm": "重启并更新",
   "settings.appUpdateApplied": "正在应用更新，Maestro 即将重启…",
+  "settings.appUpdateOpenReleases": "获取安装包",
+  "settings.appUpdateInstalledHint": "这是安装版构建——请从发布页下载并运行新的安装包。",
 };
 
 export const dictionaries = { en, "zh-CN": zhCN } as const;

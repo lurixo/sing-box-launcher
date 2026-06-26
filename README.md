@@ -54,12 +54,13 @@ npm run tauri dev
 npx tauri build --no-bundle
 ```
 
-A production build is produced by CI as `maestro-portable.zip`: a folder with
-`Maestro.exe` at the root and a `data/` subdirectory holding the bundled
-`sing-box.exe` core, `EnableLoopback.exe`, `singbox-build-info.json`, plus
+A production build is produced by CI as `maestro-<version>-windows-amd64v3-portable.zip`:
+a folder with `Maestro.exe` at the root and a `data/` subdirectory holding the
+bundled `sing-box.exe` core, `EnableLoopback.exe`, `singbox-build-info.json`, plus
 configs, settings and runtime files. Unzip it anywhere and run — no installation
-required. (Requires the Microsoft Edge WebView2 runtime, present on Windows 11
-and most Windows 10 systems.)
+required. The app and core are both built for the x86-64-v3 microarchitecture
+(AVX2; CPUs from ~2013 on). (Requires the Microsoft Edge WebView2 runtime, present
+on Windows 11 and most Windows 10 systems.)
 
 ### Configs and the core
 
@@ -153,7 +154,7 @@ The `build.yml` workflow:
 - Installs Rust stable + Node.js 22.x
 - Downloads the latest `sing-box.exe` core per `singbox-build-info.json` (sha256-verified)
 - Runs `npx tauri build --no-bundle`
-- Assembles and uploads `maestro-portable.zip` (7-day retention)
+- Assembles and uploads `maestro-windows-amd64v3-portable.zip` (7-day retention)
 
 ### Release (on version tag)
 
@@ -166,9 +167,12 @@ git push origin v1.0.0
 ```
 
 The `release.yml` workflow will:
-- Build the application and bundle the core
+- Build the application (x86-64-v3) and bundle the core
 - Create a GitHub Release titled "Maestro v1.0.0"
-- Upload the portable `.zip` as a release asset
+- Upload two assets — the portable `maestro-<version>-windows-amd64v3-portable.zip`
+  and the NSIS installer `maestro-<version>-windows-amd64v3-setup.exe` (which
+  bundles the core + tools into the install's `data/`) — plus the
+  `maestro-build-info.json` self-update manifest
 - Auto-generate changelog from commits since the last tag
 
 ## Tech Stack
