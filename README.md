@@ -2,6 +2,8 @@
 
 A lightweight Windows GUI for managing the [sing-box](https://sing-box.sagernet.org/) proxy core, built with **Tauri v2** (Rust backend + React frontend) and styled with **Windows Fluent Design System**.
 
+> **Disclaimer:** Maestro is an independent, **third-party** GUI for the [sing-box](https://sing-box.sagernet.org/) core. It is **not affiliated with, sponsored by, or endorsed by** the sing-box project or its authors. "sing-box" is referenced only to describe what Maestro is compatible with; all sing-box trademarks and copyrights belong to their respective owners.
+
 ## Features
 
 - **Portable** — Single self-contained folder, no installer; all data lives in a `data/` folder beside the executable
@@ -17,10 +19,11 @@ A lightweight Windows GUI for managing the [sing-box](https://sing-box.sagernet.
 
 ## Screenshots
 
-The app features three main panels:
-- **Dashboard** — Core status, uptime, connection info, and quick controls
-- **Proxies** — Group selector with node cards, delay testing, and search
-- **Settings** — Theme switching and app info
+The app's main views:
+- **Dashboard** — core status, live traffic chart, proxy groups, outbound IP, and config management
+- **Connections** — live active connections with per-connection controls
+- **Logs** — core and app logs with level filtering
+- **Settings** — theme, autostart, and core management
 
 ## Prerequisites
 
@@ -38,8 +41,8 @@ This project targets **Windows only**. The system proxy feature uses Windows Reg
 
 ```bash
 # Clone the repo
-git clone https://github.com/lurixo/sing-box-launcher.git
-cd sing-box-launcher
+git clone https://github.com/lurixo/Maestro.git
+cd Maestro
 
 # Install frontend dependencies
 npm install
@@ -64,22 +67,23 @@ and most Windows 10 systems.)
   download a newer build from [sing-box-releases](https://github.com/lurixo/sing-box-releases/releases).
 - Configs are named profiles stored under `data/configs/<name>.json`. Create, edit, or
   import them from the Dashboard; select the active one to run.
-- On start, the launcher reads the active config, injects `clash_api`/`cache_file`
+- On start, Maestro reads the active config, injects `clash_api`/`cache_file`
   settings, writes `config_runtime.json` (the original is never modified), and runs
   `sing-box.exe run -c config_runtime.json -D <base_dir>`.
 
 ## Project Structure
 
 ```
-sing-box-launcher/
+Maestro/
 ├── src/                        # React frontend
 │   ├── components/
 │   │   ├── TitleBar.tsx        # Custom window title bar
 │   │   └── Sidebar.tsx         # NavigationView sidebar
 │   ├── pages/
-│   │   ├── Dashboard.tsx       # Status cards & controls
-│   │   ├── Proxies.tsx         # Proxy group/node management
-│   │   └── Settings.tsx        # Theme & about
+│   │   ├── Dashboard.tsx       # Status, traffic, proxy groups, configs
+│   │   ├── Connections.tsx     # Live active connections
+│   │   ├── Logs.tsx            # Core & app logs
+│   │   └── Settings.tsx        # Theme, autostart & core management
 │   ├── stores/
 │   │   └── appStore.ts         # Zustand state management
 │   ├── styles/
@@ -96,10 +100,12 @@ sing-box-launcher/
 │   │   ├── config.rs           # Config parsing & injection
 │   │   ├── core_update.rs      # Core bundling & in-app updates
 │   │   ├── proxy.rs            # Windows system proxy (registry + WinINet)
-│   │   ├── clash.rs            # Clash API HTTP client
+│   │   ├── native_api.rs       # sing-box native gRPC client
 │   │   ├── groups.rs           # Proxy group state
 │   │   ├── settings.rs         # App settings & config profiles
 │   │   ├── accent.rs           # Windows accent color
+│   │   ├── elevation.rs        # UAC elevation relaunch
+│   │   ├── logbus.rs           # Log streaming bus
 │   │   ├── tray.rs             # System tray icon & menu
 │   │   └── error.rs            # Unified error types
 │   ├── Cargo.toml

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, memo, type CSSProperties } from "react";
+import { useEffect, useState, useCallback, useRef, memo, type CSSProperties } from "react";
 import {
   PlayRegular,
   StopRegular,
@@ -37,7 +37,7 @@ import { formatBytes, formatSpeed } from "../lib/format";
 import type { ConfigEntry, CheckResult, OutboundIpInfo, CoreMetrics, ClashModeInfo } from "../types";
 
 const ipTokenStyle: CSSProperties = {
-  fontFamily: "monospace", fontSize: 13, fontWeight: 500,
+  fontFamily: "monospace", fontSize: 15, fontWeight: 700,
   background: "var(--bg-card)", border: "1px solid var(--border-card)",
   borderRadius: 6, padding: "2px 8px", color: "var(--text-primary)",
   cursor: "pointer", whiteSpace: "nowrap", maxWidth: "100%",
@@ -170,9 +170,9 @@ function Uptime() {
     return () => clearInterval(id);
   }, [running, base]);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 13 }}>
-      <TimerRegular style={{ fontSize: 15 }} />
-      <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatUptime(running ? secs : 0)}</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 13, lineHeight: 1 }}>
+      <TimerRegular style={{ fontSize: 15, display: "block" }} />
+      <span style={{ fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{formatUptime(running ? secs : 0)}</span>
     </div>
   );
 }
@@ -220,11 +220,25 @@ function ClashModeSelector({ onModeChanged }: { onModeChanged?: () => void }) {
     }
   }, [running]);
 
+  // Fetch immediately on start and retry quickly until the clash API answers,
+  // so the selector appears on first screen instead of after a fixed delay.
   useEffect(() => {
     if (!running) { setInfo(null); return; }
-    const timer = setTimeout(refresh, 800);
-    return () => clearTimeout(timer);
-  }, [running, refresh]);
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      if (stop) return;
+      try {
+        const v = await invoke<ClashModeInfo>("get_clash_mode");
+        if (stop) return;
+        setInfo(v);
+        if (v.modes.length > 0) return; // got modes — stop polling
+      } catch { /* API not ready yet */ }
+      if (!stop) timer = setTimeout(tick, 600);
+    };
+    tick();
+    return () => { stop = true; clearTimeout(timer); };
+  }, [running]);
 
   const setMode = async (mode: string) => {
     if (busy || !info || mode === info.current) return;
@@ -268,9 +282,15 @@ function ClashModeSelector({ onModeChanged }: { onModeChanged?: () => void }) {
   );
 }
 
-function StatTile({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent?: string }) {
+function StatTile({ icon, label, value, accent, onClick }: { icon: React.ReactNode; label: string; value: string; accent?: string; onClick?: () => void }) {
   return (
-    <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", borderRadius: "var(--radius-sm)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+    <div
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      title={onClick ? label : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", borderRadius: "var(--radius-sm)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4, minWidth: 0, cursor: onClick ? "pointer" : undefined }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.03em" }}>
         <span style={{ display: "flex", color: accent || "var(--text-tertiary)" }}>{icon}</span>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
@@ -287,24 +307,32 @@ const SCALE_FLOOR = 1024; // 1 KB/s — keeps the idle scale stable (no flicker)
 
 const MetricsOverview = memo(function MetricsOverview() {
   const running = useAppStore((s) => s.status.running);
+  const setPage = useAppStore((s) => s.setPage);
   const t = useT();
   const [m, setM] = useState<CoreMetrics | null>(null);
   const [samples, setSamples] = useState<{ up: number; down: number }[]>([]);
+  const latest = useRef<CoreMetrics | null>(null);
 
+  // Buffer incoming ticks in a ref and render at a fixed 1 Hz cadence. This
+  // decouples the render/repaint rate from the core's push rate: a fast (or
+  // mis-throttled) status stream can no longer drive a re-render storm — which
+  // was both the chart "too-fast flicker" and the WebView2 renderer crash.
   useEffect(() => {
-    if (!running) { setM(null); setSamples([]); return; }
+    if (!running) { setM(null); setSamples([]); latest.current = null; return; }
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     (async () => {
-      const fn = await listen<CoreMetrics>("metrics-tick", (e) => {
-        const cur = e.payload;
-        setM(cur);
-        setSamples((s) => [...s, { up: Math.max(0, cur.uplink), down: Math.max(0, cur.downlink) }].slice(-MAX_SAMPLES));
-      });
+      const fn = await listen<CoreMetrics>("metrics-tick", (e) => { latest.current = e.payload; });
       if (cancelled) { fn(); return; }
       unlisten = fn;
     })();
-    return () => { cancelled = true; unlisten?.(); };
+    const flush = setInterval(() => {
+      const cur = latest.current;
+      if (!cur) return;
+      setM(cur);
+      setSamples((s) => [...s, { up: Math.max(0, cur.uplink), down: Math.max(0, cur.downlink) }].slice(-MAX_SAMPLES));
+    }, 1000);
+    return () => { cancelled = true; unlisten?.(); clearInterval(flush); };
   }, [running]);
 
   const last = samples[samples.length - 1] ?? { up: 0, down: 0 };
@@ -318,7 +346,7 @@ const MetricsOverview = memo(function MetricsOverview() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
         <StatTile icon={<ArrowUpRegular style={{ fontSize: 14 }} />} label={t("dashboard.upSpeed")} value={dash(formatSpeed(last.up))} accent="var(--status-success)" />
         <StatTile icon={<ArrowDownRegular style={{ fontSize: 14 }} />} label={t("dashboard.downSpeed")} value={dash(formatSpeed(last.down))} accent="var(--accent-default)" />
-        <StatTile icon={<PlugConnectedRegular style={{ fontSize: 14 }} />} label={t("dashboard.connections")} value={running && m ? String(m.connections_in) : "—"} />
+        <StatTile icon={<PlugConnectedRegular style={{ fontSize: 14 }} />} label={t("dashboard.connections")} value={running && m ? String(m.connections_in) : "—"} onClick={running ? () => setPage("connections") : undefined} />
         <StatTile icon={<ServerRegular style={{ fontSize: 14 }} />} label={t("dashboard.memory")} value={running && m ? formatBytes(m.memory) : "—"} />
         <StatTile icon={<ArrowUploadRegular style={{ fontSize: 14 }} />} label={t("dashboard.upTotal")} value={running && m ? formatBytes(m.uplink_total) : "—"} />
         <StatTile icon={<ArrowDownloadRegular style={{ fontSize: 14 }} />} label={t("dashboard.downTotal")} value={running && m ? formatBytes(m.downlink_total) : "—"} />

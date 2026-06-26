@@ -151,9 +151,10 @@ function generateLightBg(accentHex: string): ThemeBg {
     // Each step ≥ 5% lightness difference for clear visual separation
     base:          hslToHex(h, 8, 91),
     surface:       hslToHex(h, 5, 96),
-    card:          hslToHex(h, 3, 100),
-    cardHover:     hslToHex(h, 4, 97),
-    cardActive:    hslToHex(h, 5, 94),
+    // Soft off-white card (not pure white) — still a clear step above base(91).
+    card:          hslToHex(h, 3, 97),
+    cardHover:     hslToHex(h, 4, 95),
+    cardActive:    hslToHex(h, 5, 93),
     subtle:        hslToHex(h, 5, 94),
     subtleHover:   hslToHex(h, 6, 91),
     selected:      hslToHex(h, 22, 90),
