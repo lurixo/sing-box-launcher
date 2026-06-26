@@ -1,14 +1,20 @@
 [package]
-name = "sing-box-launcher"
+name = "maestro"
 version = "0.1.0"
-description = "A Tauri v2 GUI for managing sing-box proxy core"
-authors = ["sing-box-launcher contributors"]
+description = "Maestro — a Tauri v2 GUI for managing the sing-box proxy core"
+authors = ["Maestro contributors"]
 edition = "2024"
 rust-version = "1.85"
 
 [lib]
 name = "sing_box_launcher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Force the portable (--no-bundle) binary to be named Maestro.exe regardless of
+# the package name.
+[[bin]]
+name = "Maestro"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }

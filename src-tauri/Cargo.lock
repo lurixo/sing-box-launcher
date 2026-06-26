@@ -2040,6 +2040,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
+name = "maestro"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "getrandom 0.4.3",
+ "log",
+ "prost",
+ "protoc-bin-vendored",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "thiserror 2.0.18",
+ "tokio",
+ "tonic",
+ "tonic-build",
+ "tracing",
+ "tracing-subscriber",
+ "windows 0.62.2",
+ "winreg 0.56.0",
+ "zip",
+]
+
+[[package]]
 name = "markup5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3578,33 +3605,6 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
-
-[[package]]
-name = "sing-box-launcher"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "getrandom 0.4.3",
- "log",
- "prost",
- "protoc-bin-vendored",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "thiserror 2.0.18",
- "tokio",
- "tonic",
- "tonic-build",
- "tracing",
- "tracing-subscriber",
- "windows 0.62.2",
- "winreg 0.56.0",
- "zip",
-]
 
 [[package]]
 name = "siphasher"

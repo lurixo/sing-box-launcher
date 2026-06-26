@@ -569,7 +569,7 @@ export function Settings() {
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>{t("settings.about")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "var(--text-secondary)" }}>
           <div>
-            <strong style={{ color: "var(--text-primary)" }}>sing-box launcher</strong>
+            <strong style={{ color: "var(--text-primary)" }}>Maestro</strong>
             {appVersion ? ` v${appVersion}` : ""}
           </div>
           <div>{t("settings.aboutDesc")}</div>
