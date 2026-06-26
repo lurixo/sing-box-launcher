@@ -94,7 +94,7 @@ jobs:
           Compress-Archive -Path portable/* -DestinationPath "maestro-${{ steps.version.outputs.VERSION }}-portable.zip" -Force
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "Maestro v${{ steps.version.outputs.VERSION }}"
           generate_release_notes: true

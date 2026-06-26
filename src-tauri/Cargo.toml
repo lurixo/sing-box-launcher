@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Maestro — a Tauri v2 GUI for managing the sing-box proxy core"
 authors = ["Maestro contributors"]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [lib]
 name = "sing_box_launcher_lib"
