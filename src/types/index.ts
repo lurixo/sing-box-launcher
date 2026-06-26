@@ -111,6 +111,23 @@ export interface StagedKernel {
   version: string;
 }
 
+export interface AppInfo {
+  version: string;
+  built_at: string;
+}
+
+export interface AppUpdateCheck {
+  current_built_at: string;
+  latest_version: string;
+  latest_built_at: string;
+  update_available: boolean;
+}
+
+export interface StagedApp {
+  version: string;
+  built_at: string;
+}
+
 export type DelayMap = Record<string, number>;
 
 export type Page = "dashboard" | "connections" | "logs" | "settings";

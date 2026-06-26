@@ -19,7 +19,10 @@ import { listen } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { useReveal } from "../hooks/useReveal";
 import { useT, type TranslationKey, type Lang } from "../i18n/strings";
-import type { Theme, AppSettings, CoreInfo, CoreUpdateCheck, StagedKernel, KernelSource } from "../types";
+import type {
+  Theme, AppSettings, CoreInfo, CoreUpdateCheck, StagedKernel, KernelSource,
+  AppInfo, AppUpdateCheck, StagedApp,
+} from "../types";
 
 const KERNEL_SOURCES: { id: KernelSource; label: string }[] = [
   { id: "lurixo", label: "lurixo" },
@@ -136,6 +139,13 @@ export function Settings() {
   const [staged, setStaged] = useState<StagedKernel | null>(null);
   const [coreMsg, setCoreMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
 
+  // ─── App self-update state ───────────────────────────────────────
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [appCheck, setAppCheck] = useState<AppUpdateCheck | null>(null);
+  const [appBusy, setAppBusy] = useState(false);
+  const [stagedApp, setStagedApp] = useState<StagedApp | null>(null);
+  const [appMsg, setAppMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
+
   const loadCoreInfo = useCallback(async () => {
     try {
       setCoreInfo(await invoke<CoreInfo>("get_core_info"));
@@ -236,14 +246,21 @@ export function Settings() {
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => {});
     loadCoreInfo();
-    // Re-open the restart prompt for a download staged in a prior session.
+    invoke<AppInfo>("get_app_info").then(setAppInfo).catch(() => {});
+    // Re-open the restart prompts for downloads staged in a prior session.
     invoke<StagedKernel | null>("get_staged_kernel")
       .then((s) => { if (s) setStaged(s); })
       .catch(() => {});
-    const un = listen<{ stage: string; message: string }>("core-update-progress", (e) => {
+    invoke<StagedApp | null>("get_staged_app_update")
+      .then((s) => { if (s) setStagedApp(s); })
+      .catch(() => {});
+    const unCore = listen<{ stage: string; message: string }>("core-update-progress", (e) => {
       setCoreMsg({ type: e.payload.stage === "done" ? "ok" : "info", text: e.payload.message });
     });
-    return () => { un.then((f) => f()); };
+    const unApp = listen<{ stage: string; message: string }>("app-update-progress", (e) => {
+      setAppMsg({ type: e.payload.stage === "done" ? "ok" : "info", text: e.payload.message });
+    });
+    return () => { unCore.then((f) => f()); unApp.then((f) => f()); };
   }, [loadCoreInfo]);
 
   const handleAutostartToggle = async (val: boolean) => {
@@ -352,6 +369,58 @@ export function Settings() {
       setCoreMsg({ type: "err", text: String(e) });
     }
     setCacheBusy(false);
+  };
+
+  // ─── App self-update (Maestro itself, separate from the kernel) ──────
+  const handleCheckApp = async () => {
+    setAppBusy(true);
+    setAppMsg(null);
+    try {
+      const c = await invoke<AppUpdateCheck>("check_app_update");
+      setAppCheck(c);
+      setAppMsg(
+        c.update_available
+          ? { type: "info", text: t("settings.appUpdateAvailable", { version: c.latest_version }) }
+          : { type: "ok", text: t("settings.appUpToDate") }
+      );
+    } catch (e) {
+      setAppMsg({ type: "err", text: String(e) });
+    }
+    setAppBusy(false);
+  };
+
+  const handleDownloadApp = async () => {
+    setAppBusy(true);
+    setAppMsg(null);
+    try {
+      const s = await invoke<StagedApp>("download_app_update");
+      setStagedApp(s);
+    } catch (e) {
+      setAppMsg({ type: "err", text: String(e) });
+    }
+    setAppBusy(false);
+  };
+
+  // Confirm → swap exe + relaunch. The app exits as part of this call, so there
+  // is nothing to await meaningfully; we just fire it.
+  const handleApplyApp = async () => {
+    setStagedApp(null);
+    setAppMsg({ type: "info", text: t("settings.appUpdateApplied") });
+    try {
+      await invoke("apply_app_update");
+    } catch (e) {
+      setAppMsg({ type: "err", text: String(e) });
+    }
+  };
+
+  const handleCancelApp = async () => {
+    setStagedApp(null);
+    try {
+      await invoke("discard_app_update");
+    } catch {
+      /* noop */
+    }
+    setAppMsg({ type: "info", text: t("settings.downloadCanceled") });
   };
 
   const handleUwpLoopback = async () => {
@@ -816,6 +885,65 @@ export function Settings() {
           <div>{t("settings.aboutDesc")}</div>
           <div style={{ marginTop: 4 }}>{t("settings.builtWith")}</div>
         </div>
+
+        {/* Application self-update (separate from the kernel update above) */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0 4px", marginTop: 10, borderTop: "1px solid var(--border-divider)" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{t("settings.appUpdate")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+              {appInfo?.built_at ? t("settings.appBuilt", { date: appInfo.built_at }) : t("settings.appUpdateDesc")}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="fluent-btn reveal-target"
+              onClick={handleCheckApp}
+              disabled={appBusy}
+              style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+            >
+              {appBusy ? (
+                <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} />
+              ) : (
+                <ArrowSyncRegular style={{ fontSize: 14 }} />
+              )}
+              {t("settings.check")}
+            </button>
+            {appCheck?.update_available && (
+              <button
+                className="fluent-btn accent reveal-target"
+                onClick={handleDownloadApp}
+                disabled={appBusy}
+                style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+              >
+                <ArrowDownloadRegular style={{ fontSize: 14 }} />
+                {t("settings.update")}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {appMsg && (
+          <div
+            className="infobar"
+            style={{
+              marginTop: 10,
+              background:
+                appMsg.type === "err"
+                  ? "var(--status-danger-bg)"
+                  : appMsg.type === "ok"
+                  ? "var(--status-success-bg)"
+                  : undefined,
+              borderColor:
+                appMsg.type === "err"
+                  ? "var(--status-danger)"
+                  : appMsg.type === "ok"
+                  ? "var(--status-success)"
+                  : undefined,
+            }}
+          >
+            {appMsg.text}
+          </div>
+        )}
       </div>
 
       {/* Restart-confirm modal: shown after a download stages a new core, before
@@ -849,6 +977,45 @@ export function Settings() {
                 style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
               >
                 {t("settings.applyKernelConfirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* App self-update restart-confirm modal: confirm swaps Maestro's own exe
+          and relaunches; cancel discards the staged download. Gated behind the
+          kernel modal so the two can't stack and trap the user when both are
+          staged — the kernel one is handled first. */}
+      {stagedApp && !staged && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1001,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div className="fluent-card" style={{ width: 360, padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+              {t("settings.appUpdateApplyTitle")}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              {t("settings.appUpdateApplyBody", { version: stagedApp.version })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button
+                className="fluent-btn reveal-target"
+                onClick={handleCancelApp}
+                style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
+              >
+                {t("settings.applyKernelCancel")}
+              </button>
+              <button
+                className="fluent-btn accent reveal-target"
+                onClick={handleApplyApp}
+                style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
+              >
+                {t("settings.appUpdateApplyConfirm")}
               </button>
             </div>
           </div>

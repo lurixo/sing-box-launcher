@@ -54,6 +54,24 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
+      - name: Generate Maestro build info
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/release/Maestro.exe"
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          $builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $info = [ordered]@{
+            version        = "$ver"
+            windows_asset  = "maestro-portable.zip"
+            windows_sha256 = $sha
+            built_at       = $builtAt
+            run_id         = "${{ github.run_id }}"
+          }
+          # ASCII (no BOM) so serde_json on the client parses it cleanly.
+          $info | ConvertTo-Json | Set-Content -Path stage/maestro-build-info.json -Encoding ascii
+          Write-Host ($info | ConvertTo-Json -Compress)
+
       - name: Assemble portable package
         shell: pwsh
         run: |
@@ -62,6 +80,7 @@ jobs:
           Copy-Item src-tauri/target/release/Maestro.exe portable/
           Copy-Item stage/sing-box.exe portable/data/
           Copy-Item stage/singbox-build-info.json portable/data/
+          Copy-Item stage/maestro-build-info.json portable/data/
           Copy-Item src-tauri/resources/EnableLoopback.exe portable/data/
           Compress-Archive -Path portable/* -DestinationPath maestro-portable.zip -Force
 

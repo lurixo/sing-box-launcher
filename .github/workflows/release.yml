@@ -62,6 +62,25 @@ jobs:
         shell: bash
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
+      - name: Generate Maestro build info
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/release/Maestro.exe"
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          $builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $asset = "maestro-${{ steps.version.outputs.VERSION }}-portable.zip"
+          $info = [ordered]@{
+            version        = "${{ steps.version.outputs.VERSION }}"
+            windows_asset  = $asset
+            windows_sha256 = $sha
+            built_at       = $builtAt
+            run_id         = "${{ github.run_id }}"
+          }
+          # ASCII (no BOM) so serde_json on the client parses it cleanly. Hash is
+          # over Maestro.exe — the binary the self-update verifies and swaps in.
+          $info | ConvertTo-Json | Set-Content -Path stage/maestro-build-info.json -Encoding ascii
+          Write-Host ($info | ConvertTo-Json -Compress)
+
       - name: Assemble portable package
         shell: pwsh
         run: |
@@ -70,6 +89,7 @@ jobs:
           Copy-Item src-tauri/target/release/Maestro.exe portable/
           Copy-Item stage/sing-box.exe portable/data/
           Copy-Item stage/singbox-build-info.json portable/data/
+          Copy-Item stage/maestro-build-info.json portable/data/
           Copy-Item src-tauri/resources/EnableLoopback.exe portable/data/
           Compress-Archive -Path portable/* -DestinationPath "maestro-${{ steps.version.outputs.VERSION }}-portable.zip" -Force
 
@@ -80,5 +100,7 @@ jobs:
           generate_release_notes: true
           files: |
             maestro-*-portable.zip
+            stage/maestro-build-info.json
           draft: false
-          prerelease: false
+          # A tag with a pre-release suffix (e.g. v1.0.0-rc.1) is marked as such.
+          prerelease: ${{ contains(github.ref_name, '-') }}

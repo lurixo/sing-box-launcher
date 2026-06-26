@@ -169,6 +169,15 @@ export const en = {
   "settings.about": "About",
   "settings.aboutDesc": "A lightweight GUI for managing the sing-box proxy core.",
   "settings.builtWith": "Built with Tauri v2 + React 19 + Rust",
+  "settings.appUpdate": "Application update",
+  "settings.appUpdateDesc": "Check for a new Maestro release (lurixo).",
+  "settings.appBuilt": "Built {date}",
+  "settings.appUpdateAvailable": "New version available: {version}",
+  "settings.appUpToDate": "Maestro is up to date.",
+  "settings.appUpdateApplyTitle": "Update Maestro?",
+  "settings.appUpdateApplyBody": "Maestro {version} has been downloaded. Restart now to apply? The app will close and reopen.",
+  "settings.appUpdateApplyConfirm": "Restart & update",
+  "settings.appUpdateApplied": "Applying update — Maestro will restart…",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -342,6 +351,15 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.about": "关于",
   "settings.aboutDesc": "一个用于管理 sing-box 代理内核的轻量 GUI。",
   "settings.builtWith": "基于 Tauri v2 + React 19 + Rust 构建",
+  "settings.appUpdate": "应用更新",
+  "settings.appUpdateDesc": "检查 Maestro 新版本（lurixo）。",
+  "settings.appBuilt": "构建于 {date}",
+  "settings.appUpdateAvailable": "有新版本可更新：{version}",
+  "settings.appUpToDate": "Maestro 已是最新。",
+  "settings.appUpdateApplyTitle": "更新 Maestro？",
+  "settings.appUpdateApplyBody": "Maestro {version} 已下载完成。现在重启以应用吗？应用将关闭并重新打开。",
+  "settings.appUpdateApplyConfirm": "重启并更新",
+  "settings.appUpdateApplied": "正在应用更新，Maestro 即将重启…",
 };
 
 export const dictionaries = { en, "zh-CN": zhCN } as const;

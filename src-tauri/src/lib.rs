@@ -1,5 +1,6 @@
 use tauri::Emitter;
 mod accent;
+mod app_update;
 mod config;
 mod core_update;
 mod elevation;
@@ -423,6 +424,22 @@ async fn clear_kernel_cache(
     Ok(core_update::clear_cache(&m.base_dir))
 }
 
+/// Apply a staged Maestro self-update: swap the app binary, spawn a detached
+/// relauncher that waits for this process to exit and starts the new exe, then
+/// quit. Gated behind a UI confirmation (the download itself does not restart).
+#[tauri::command]
+async fn apply_app_update(
+    mgr: tauri::State<'_, manager::Manager>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let base_dir = mgr.lock().await.base_dir.clone();
+    app_update::apply_staged(&base_dir)?;
+    // New exe is in place and a relauncher is waiting on our exit; quit now
+    // (honoring exit-core-on-close) so it can bring the new version up.
+    shutdown_and_exit(&app);
+    Ok(())
+}
+
 /// Disable the system proxy, stop the core, and exit the process. Shared by
 /// every quit path: the tray Quit item and the window-close handler when the
 /// user has not opted to minimize to tray.
@@ -479,6 +496,8 @@ pub fn run() {
     let data_dir = manager::data_dir();
     let _ = std::fs::create_dir_all(&data_dir);
     migrate_legacy_layout(&manager::resolve_base_dir(), &data_dir);
+    // Drop a leftover <exe>.old from a completed self-update.
+    app_update::cleanup_leftovers();
 
     let dl = open_debug_log();
     dlog(&dl, &format!("=== Maestro starting (pid {}) ===", std::process::id()));
@@ -611,6 +630,12 @@ pub fn run() {
             apply_staged_kernel,
             discard_staged_kernel,
             clear_kernel_cache,
+            app_update::get_app_info,
+            app_update::check_app_update,
+            app_update::download_app_update,
+            app_update::get_staged_app_update,
+            app_update::discard_app_update,
+            apply_app_update,
             elevation::is_admin,
         ])
         .setup(move |app| {
