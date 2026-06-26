@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import {
   DismissRegular,
   MaximizeRegular,
@@ -48,7 +49,7 @@ export function TitleBar() {
         </button>
         <button
           className="titlebar-btn close"
-          onClick={() => appWindow.hide()}
+          onClick={() => invoke("request_close")}
           aria-label={t("titlebar.close")}
         >
           <DismissRegular style={{ fontSize: 16 }} />

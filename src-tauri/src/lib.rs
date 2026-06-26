@@ -304,6 +304,52 @@ async fn open_base_dir(mgr: tauri::State<'_, manager::Manager>) -> Result<(), Ap
     Ok(())
 }
 
+/// Open the folder containing the sing-box core, selecting the exe.
+#[tauri::command]
+async fn open_core_location(mgr: tauri::State<'_, manager::Manager>) -> Result<(), AppError> {
+    let base = mgr.lock().await.base_dir.clone();
+    #[cfg(target_os = "windows")]
+    {
+        let core = base.join("sing-box.exe");
+        let _ = if core.exists() {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", core.display()))
+                .spawn()
+        } else {
+            std::process::Command::new("explorer").arg(&base).spawn()
+        };
+    }
+    Ok(())
+}
+
+/// Window close requested by the custom title-bar X: minimize to tray or quit
+/// depending on the `close_to_tray` setting.
+#[tauri::command]
+async fn request_close(
+    mgr: tauri::State<'_, manager::Manager>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let mut m = mgr.lock().await;
+    let close_to_tray = settings::load_settings(&m.base_dir).close_to_tray;
+    if close_to_tray {
+        drop(m);
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.hide();
+        }
+    } else {
+        if m.proxy_enabled {
+            m.proxy_enabled = false;
+            let _ = proxy::set_system_proxy(false, "", "");
+        }
+        if m.running {
+            let _ = m.stop().await;
+        }
+        drop(m);
+        app.exit(0);
+    }
+    Ok(())
+}
+
 // ─── App Setup ──────────────────────────────────────────────────────────────
 
 /// Move files from the old flat layout (next to the exe) into `data/` so an
@@ -362,7 +408,8 @@ pub fn run() {
     // Check if silent start is enabled
     let app_settings = settings::load_settings(&base_dir);
     let silent = app_settings.silent_start;
-    dlog(&dl, &format!("silent_start = {silent}"));
+    let allow_multiple = app_settings.allow_multiple;
+    dlog(&dl, &format!("silent_start = {silent}, allow_multiple = {allow_multiple}"));
 
     // Relaunch elevated (UAC) before building the app so the core can use TUN
     if elevation::should_exit_for_elevation(app_settings.run_as_admin) {
@@ -377,7 +424,20 @@ pub fn run() {
 
     let dl_setup = dl.clone();
     let logbus_setup = logbus.clone();
-    tauri::Builder::default()
+
+    // Single-instance guard (unless the user opted into multiple instances):
+    // a second launch focuses the existing window instead of opening another.
+    let mut builder = tauri::Builder::default();
+    if !allow_multiple {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }));
+    }
+    builder
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -401,6 +461,8 @@ pub fn run() {
             close_connection,
             close_all_connections,
             open_base_dir,
+            open_core_location,
+            request_close,
             accent::get_system_accent,
             config::list_configs,
             config::get_config,
@@ -416,6 +478,8 @@ pub fn run() {
             settings::set_log_level,
             settings::set_log_persist,
             settings::set_lang,
+            settings::set_allow_multiple,
+            settings::set_close_to_tray,
             logbus::get_logs,
             logbus::clear_logs,
             proxy::enable_uwp_loopback,
@@ -456,8 +520,25 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
                 api.prevent_close();
+                let close_to_tray = settings::load_settings(&manager::data_dir()).close_to_tray;
+                if close_to_tray {
+                    let _ = window.hide();
+                } else {
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let mgr = app.state::<manager::Manager>();
+                        let mut m = mgr.lock().await;
+                        if m.proxy_enabled {
+                            m.proxy_enabled = false;
+                            let _ = proxy::set_system_proxy(false, "", "");
+                        }
+                        if m.running {
+                            let _ = m.stop().await;
+                        }
+                        app.exit(0);
+                    });
+                }
             }
         })
         .run(tauri::generate_context!())

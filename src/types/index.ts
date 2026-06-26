@@ -26,6 +26,8 @@ export interface AppSettings {
   log_level: string;
   log_persist: boolean;
   lang: string;
+  allow_multiple: boolean;
+  close_to_tray: boolean;
 }
 
 export interface LogLine {

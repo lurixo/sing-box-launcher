@@ -8,6 +8,7 @@ import {
   BoxRegular,
   ArrowSyncRegular,
   ArrowDownloadRegular,
+  FolderOpenRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { ACCENT_PRESETS } from "../lib/colorEngine";
@@ -100,6 +101,10 @@ export function Settings() {
   const [runAsAdmin, setRunAsAdmin] = useState(true);
   const [elevated, setElevated] = useState(true);
 
+  // ─── Window behavior ─────────────────────────────────────────────
+  const [allowMultiple, setAllowMultiple] = useState(false);
+  const [closeToTray, setCloseToTray] = useState(true);
+
   // ─── Log state ───────────────────────────────────────────────────
   const [logPersist, setLogPersist] = useState(false);
 
@@ -131,6 +136,8 @@ export function Settings() {
         setSilentStart(settings.silent_start);
         setRunAsAdmin(settings.run_as_admin);
         setLogPersist(settings.log_persist);
+        setAllowMultiple(settings.allow_multiple);
+        setCloseToTray(settings.close_to_tray);
         setElevated(await invoke<boolean>("is_admin"));
       } catch (e) {
         setGenErr(String(e));
@@ -152,6 +159,24 @@ export function Settings() {
     try {
       await invoke("set_log_persist", { enabled: val });
       setLogPersist(val);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
+
+  const handleAllowMultiple = async (val: boolean) => {
+    try {
+      await invoke("set_allow_multiple", { enabled: val });
+      setAllowMultiple(val);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
+
+  const handleCloseToTray = async (val: boolean) => {
+    try {
+      await invoke("set_close_to_tray", { enabled: val });
+      setCloseToTray(val);
     } catch (e) {
       setGenErr(String(e));
     }
@@ -285,6 +310,24 @@ export function Settings() {
             {t("settings.notElevated")}
           </div>
         )}
+
+        {/* Allow multiple instances */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.allowMultiple")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{t("settings.allowMultipleDesc")}</div>
+          </div>
+          <ToggleSwitch checked={allowMultiple} onChange={handleAllowMultiple} />
+        </div>
+
+        {/* Close to tray */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.closeToTray")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{t("settings.closeToTrayDesc")}</div>
+          </div>
+          <ToggleSwitch checked={closeToTray} onChange={handleCloseToTray} />
+        </div>
 
         {/* Autostart */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
@@ -506,6 +549,14 @@ export function Settings() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="fluent-btn reveal-target"
+              onClick={() => invoke("open_core_location")}
+              style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+            >
+              <FolderOpenRegular style={{ fontSize: 14 }} />
+              {t("settings.openCoreLocation")}
+            </button>
             <button
               className="fluent-btn reveal-target"
               onClick={handleCheckCore}

@@ -42,6 +42,12 @@ pub struct AppSettings {
     pub log_persist: bool,
     #[serde(default = "default_lang")]
     pub lang: String,
+    /// Allow more than one instance to run at once. Default: single instance.
+    #[serde(default)]
+    pub allow_multiple: bool,
+    /// Closing the window minimizes to tray instead of quitting. Default: on.
+    #[serde(default = "default_true")]
+    pub close_to_tray: bool,
 }
 
 impl Default for AppSettings {
@@ -53,6 +59,8 @@ impl Default for AppSettings {
             log_level: default_log_level(),
             log_persist: false,
             lang: default_lang(),
+            allow_multiple: false,
+            close_to_tray: true,
         }
     }
 }
@@ -138,6 +146,28 @@ pub async fn set_log_persist(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.log_persist = enabled;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_allow_multiple(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.allow_multiple = enabled;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_close_to_tray(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.close_to_tray = enabled;
     save_settings(&mgr.base_dir, &settings)
 }
 
