@@ -201,30 +201,51 @@ export function Dashboard() {
     }
   }, [configExpanded, loadConfigList]);
 
+  // If no config is active yet, make `name` the active one (first-config UX).
+  const activateIfFirst = useCallback(async (name: string): Promise<boolean> => {
+    try {
+      const list = await invoke<ConfigEntry[]>("list_configs");
+      if (!list.some((c) => c.active)) {
+        await invoke("set_active_config", { name });
+        return true;
+      }
+    } catch {
+      /* noop */
+    }
+    return false;
+  }, []);
+
   const handleSaveConfig = async () => {
     if (!editingName) return;
     setConfigSaving(true);
     try {
       await invoke("save_config", { name: editingName, content: configText });
       setConfigDirty(false);
-      setConfigMsg({ type: "ok", text: t("dashboard.savedMsg") });
+      const activated = await activateIfFirst(editingName);
+      await loadConfigList();
+      setConfigMsg({
+        type: "ok",
+        text: activated ? t("dashboard.savedActiveMsg") : t("dashboard.savedMsg"),
+      });
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
     setConfigSaving(false);
   };
 
+  // Format the in-editor text only. It is NOT saved — the user decides whether
+  // to keep it (the result is left dirty so Save stays enabled).
   const handleCheckFormat = async () => {
     if (!editingName) return;
     setChecking(true);
     setConfigMsg(null);
     try {
-      await invoke("save_config", { name: editingName, content: configText });
-      setConfigDirty(false);
-      const res = await invoke<CheckResult>("check_and_format_config", { name: editingName });
+      const res = await invoke<CheckResult>("check_and_format_config", { content: configText });
       if (res.ok) {
-        setConfigText(res.content);
-        setConfigDirty(false);
+        if (res.content !== configText) {
+          setConfigText(res.content);
+          setConfigDirty(true);
+        }
         setConfigMsg({ type: "ok", text: t("dashboard.checkOk") });
       } else {
         setConfigMsg({ type: "err", text: res.message });
@@ -307,9 +328,15 @@ export function Dashboard() {
       const baseName = file.name.replace(/\.json$/i, "").replace(/[^a-zA-Z0-9_-]/g, "_") || "imported";
       try {
         await invoke("save_config", { name: baseName, content: text });
+        const activated = await activateIfFirst(baseName);
         await loadConfigList();
         openEditor(baseName);
-        setConfigMsg({ type: "ok", text: t("dashboard.importedMsg", { name: baseName }) });
+        setConfigMsg({
+          type: "ok",
+          text: activated
+            ? t("dashboard.importedActiveMsg", { name: baseName })
+            : t("dashboard.importedMsg", { name: baseName }),
+        });
       } catch (e) {
         setConfigMsg({ type: "err", text: String(e) });
       }
@@ -625,13 +652,13 @@ export function Dashboard() {
                     {t("dashboard.noConfigs")}
                   </div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {configs.map((c) => (
                       <div
                         key={c.name}
                         style={{
-                          display: "flex", alignItems: "center", gap: 10,
-                          padding: "10px 14px", borderRadius: "var(--radius-sm)",
+                          display: "flex", alignItems: "center", gap: 12,
+                          padding: "12px 16px", borderRadius: "var(--radius-sm)",
                           border: c.active ? "1px solid var(--accent-default)" : "1px solid var(--border-card)",
                           background: c.active ? "var(--bg-selected)" : "var(--bg-card)",
                           cursor: "pointer", transition: "background 0.1s",
@@ -672,11 +699,11 @@ export function Dashboard() {
                           </span>
                         )}
                         {/* Action buttons */}
-                        <div style={{ display: "flex", gap: 2, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: "flex", gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                           <button
                             className="fluent-btn reveal-target"
                             onClick={() => { setRenamingName(c.name); setRenameInput(c.name); }}
-                            style={{ fontSize: 11, minHeight: 26, padding: "2px 6px" }}
+                            style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px" }}
                             title={t("common.rename")}
                           >
                             <EditRegular style={{ fontSize: 13 }} />
@@ -686,7 +713,7 @@ export function Dashboard() {
                               <button
                                 className="fluent-btn reveal-target"
                                 onClick={() => handleSetActive(c.name)}
-                                style={{ fontSize: 11, minHeight: 26, padding: "2px 6px" }}
+                                style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px" }}
                                 title={t("dashboard.setActive")}
                               >
                                 <CheckmarkCircleRegular style={{ fontSize: 13 }} />
@@ -694,7 +721,7 @@ export function Dashboard() {
                               <button
                                 className="fluent-btn reveal-target"
                                 onClick={() => handleDelete(c.name)}
-                                style={{ fontSize: 11, minHeight: 26, padding: "2px 6px", color: "var(--status-danger)" }}
+                                style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px", color: "var(--status-danger)" }}
                                 title={t("common.delete")}
                               >
                                 <DeleteRegular style={{ fontSize: 13 }} />

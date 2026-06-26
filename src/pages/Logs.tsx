@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
-import type { LogLine } from "../types";
+import type { AppSettings, LogLine } from "../types";
 
 const LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
 type Level = (typeof LEVELS)[number];
@@ -42,9 +42,28 @@ export function Logs() {
 
   const [lines, setLines] = useState<LogLine[]>([]);
   const [source, setSource] = useState<"core" | "app">("core");
-  const [minLevel, setMinLevel] = useState<Level>("trace");
+  const [minLevel, setMinLevel] = useState<Level>("info");
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Seed the level from the persisted kernel log level — this switch is the
+  // single source of truth for verbosity (it also filters the view below).
+  useEffect(() => {
+    invoke<AppSettings>("get_settings")
+      .then((s) => {
+        if ((LEVELS as readonly string[]).includes(s.log_level)) {
+          setMinLevel(s.log_level as Level);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Change the kernel verbosity (persisted, applied on next core start) and the
+  // display filter together.
+  const changeLevel = (level: Level) => {
+    setMinLevel(level);
+    invoke("set_log_level", { level }).catch(() => {});
+  };
 
   useEffect(() => {
     const merge = (incoming: LogLine[]) =>
@@ -127,7 +146,8 @@ export function Logs() {
           <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("logs.minLevel")}</span>
           <select
             value={minLevel}
-            onChange={(e) => setMinLevel(e.target.value as Level)}
+            onChange={(e) => changeLevel(e.target.value as Level)}
+            title={t("logs.levelApplyHint")}
             style={{
               border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
               padding: "4px 8px", fontSize: 12, background: "var(--bg-surface)",

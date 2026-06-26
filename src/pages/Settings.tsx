@@ -30,8 +30,6 @@ const langs: { id: Lang; label: string }[] = [
   { id: "en", label: "English" },
 ];
 
-const LOG_LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
-
 function ToggleSwitch({
   checked,
   onChange,
@@ -103,7 +101,6 @@ export function Settings() {
   const [elevated, setElevated] = useState(true);
 
   // ─── Log state ───────────────────────────────────────────────────
-  const [logLevel, setLogLevel] = useState("info");
   const [logPersist, setLogPersist] = useState(false);
 
   // ─── UWP state ───────────────────────────────────────────────────
@@ -133,7 +130,6 @@ export function Settings() {
         const settings = await invoke<AppSettings>("get_settings");
         setSilentStart(settings.silent_start);
         setRunAsAdmin(settings.run_as_admin);
-        setLogLevel(settings.log_level);
         setLogPersist(settings.log_persist);
         setElevated(await invoke<boolean>("is_admin"));
       } catch (e) {
@@ -147,15 +143,6 @@ export function Settings() {
     try {
       await invoke("set_run_as_admin", { enabled: val });
       setRunAsAdmin(val);
-    } catch (e) {
-      setGenErr(String(e));
-    }
-  };
-
-  const handleLogLevel = async (level: string) => {
-    try {
-      await invoke("set_log_level", { level });
-      setLogLevel(level);
     } catch (e) {
       setGenErr(String(e));
     }
@@ -364,28 +351,6 @@ export function Settings() {
       {/* ─── Logs ─── */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("settings.logs")}</div>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
-          <div style={{ flex: 1, paddingRight: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.logLevel")}</div>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-              {t("settings.logLevelDesc")}
-            </div>
-          </div>
-          <select
-            value={logLevel}
-            onChange={(e) => handleLogLevel(e.target.value)}
-            style={{
-              border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
-              padding: "6px 10px", fontSize: 13, background: "var(--bg-surface)",
-              color: "var(--text-primary)", outline: "none", height: 32, fontFamily: "inherit", flexShrink: 0,
-            }}
-          >
-            {LOG_LEVELS.map((l) => (
-              <option key={l} value={l}>{l.toUpperCase()}</option>
-            ))}
-          </select>
-        </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0" }}>
           <div>
