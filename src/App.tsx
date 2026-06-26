@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
@@ -7,7 +8,7 @@ import { Connections } from "./pages/Connections";
 import { Logs } from "./pages/Logs";
 import { Settings } from "./pages/Settings";
 import { useAppStore } from "./stores/appStore";
-import type { CoreStatus, ProxyGroup, Page } from "./types";
+import type { CoreStatus, ProxyGroup, Page, AppSettings } from "./types";
 
 export function App() {
   const page = useAppStore((s) => s.page);
@@ -22,6 +23,18 @@ export function App() {
   // Initialize: fetch status and set up event listeners
   useEffect(() => {
     fetchStatus();
+
+    // Auto-start the core on launch if enabled (and not already running, e.g.
+    // when the core was left running after a previous close).
+    (async () => {
+      try {
+        const s = await invoke<AppSettings>("get_settings");
+        if (s.auto_start_core) {
+          const st = await invoke<CoreStatus>("get_status");
+          if (!st.running) startCore();
+        }
+      } catch { /* ignore */ }
+    })();
 
     const unlistenStatus = listen<CoreStatus>("core-status-changed", (e) => {
       setStatus(e.payload);

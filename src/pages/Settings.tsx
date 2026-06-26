@@ -104,6 +104,9 @@ export function Settings() {
   // ─── Window behavior ─────────────────────────────────────────────
   const [allowMultiple, setAllowMultiple] = useState(false);
   const [closeToTray, setCloseToTray] = useState(true);
+  const [exitCoreOnClose, setExitCoreOnClose] = useState(true);
+  const [autoStartCore, setAutoStartCore] = useState(true);
+  const [startupDelay, setStartupDelay] = useState(30);
 
   // ─── Log state ───────────────────────────────────────────────────
   const [logPersist, setLogPersist] = useState(false);
@@ -138,6 +141,9 @@ export function Settings() {
         setLogPersist(settings.log_persist);
         setAllowMultiple(settings.allow_multiple);
         setCloseToTray(settings.close_to_tray);
+        setExitCoreOnClose(settings.exit_core_on_close);
+        setAutoStartCore(settings.auto_start_core);
+        setStartupDelay(settings.startup_delay_secs);
         setElevated(await invoke<boolean>("is_admin"));
       } catch (e) {
         setGenErr(String(e));
@@ -177,6 +183,34 @@ export function Settings() {
     try {
       await invoke("set_close_to_tray", { enabled: val });
       setCloseToTray(val);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
+
+  const handleExitCoreOnClose = async (val: boolean) => {
+    try {
+      await invoke("set_exit_core_on_close", { enabled: val });
+      setExitCoreOnClose(val);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
+
+  const handleAutoStartCore = async (val: boolean) => {
+    try {
+      await invoke("set_auto_start_core", { enabled: val });
+      setAutoStartCore(val);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
+
+  const handleStartupDelay = async (val: number) => {
+    const secs = Math.max(0, Math.min(3600, Math.floor(val) || 0));
+    setStartupDelay(secs);
+    try {
+      await invoke("set_startup_delay", { secs });
     } catch (e) {
       setGenErr(String(e));
     }
@@ -329,6 +363,24 @@ export function Settings() {
           <ToggleSwitch checked={closeToTray} onChange={handleCloseToTray} />
         </div>
 
+        {/* Exit core when closing (below close-to-tray) */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.exitCoreOnClose")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{t("settings.exitCoreOnCloseDesc")}</div>
+          </div>
+          <ToggleSwitch checked={exitCoreOnClose} onChange={handleExitCoreOnClose} />
+        </div>
+
+        {/* Start core on launch */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.autoStartCore")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{t("settings.autoStartCoreDesc")}</div>
+          </div>
+          <ToggleSwitch checked={autoStartCore} onChange={handleAutoStartCore} />
+        </div>
+
         {/* Autostart */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
           <div>
@@ -340,6 +392,27 @@ export function Settings() {
             <ToggleSwitch checked={autostart} onChange={handleAutostartToggle} />
           )}
         </div>
+
+        {/* Startup delay - only when autostart is ON (below autostart) */}
+        {autostart && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.startupDelay")}</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{t("settings.startupDelayDesc")}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="number"
+                min={0}
+                max={3600}
+                value={startupDelay}
+                onChange={(e) => handleStartupDelay(Number(e.target.value))}
+                style={{ width: 72, textAlign: "right", fontSize: 13, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border-default)", background: "var(--bg-card)", color: "var(--text-primary)", fontFamily: "inherit" }}
+              />
+              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("settings.seconds")}</span>
+            </div>
+          </div>
+        )}
 
         {/* Silent Start - only visible when autostart is ON */}
         {autostart && (

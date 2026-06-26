@@ -21,6 +21,10 @@ fn default_lang() -> String {
     "zh-CN".into()
 }
 
+fn default_startup_delay() -> u32 {
+    30
+}
+
 /// Allowed sing-box log levels, lowest to highest verbosity.
 pub const LOG_LEVELS: [&str; 5] = ["trace", "debug", "info", "warn", "error"];
 
@@ -38,7 +42,8 @@ pub struct AppSettings {
     pub run_as_admin: bool,
     #[serde(default = "default_log_level")]
     pub log_level: String,
-    #[serde(default)]
+    /// Persist core logs to sing-box.log. Default: on.
+    #[serde(default = "default_true")]
     pub log_persist: bool,
     #[serde(default = "default_lang")]
     pub lang: String,
@@ -48,6 +53,15 @@ pub struct AppSettings {
     /// Closing the window minimizes to tray instead of quitting. Default: on.
     #[serde(default = "default_true")]
     pub close_to_tray: bool,
+    /// Start the core automatically when the app launches. Default: on.
+    #[serde(default = "default_true")]
+    pub auto_start_core: bool,
+    /// Stop the core when the app actually exits (not on minimize-to-tray). Default: on.
+    #[serde(default = "default_true")]
+    pub exit_core_on_close: bool,
+    /// Seconds to delay the whole app on an autostart (boot) launch. Default: 30.
+    #[serde(default = "default_startup_delay")]
+    pub startup_delay_secs: u32,
 }
 
 impl Default for AppSettings {
@@ -57,10 +71,13 @@ impl Default for AppSettings {
             active_config: "default".into(),
             run_as_admin: true,
             log_level: default_log_level(),
-            log_persist: false,
+            log_persist: true,
             lang: default_lang(),
             allow_multiple: false,
             close_to_tray: true,
+            auto_start_core: true,
+            exit_core_on_close: true,
+            startup_delay_secs: default_startup_delay(),
         }
     }
 }
@@ -168,6 +185,39 @@ pub async fn set_close_to_tray(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.close_to_tray = enabled;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_auto_start_core(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.auto_start_core = enabled;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_exit_core_on_close(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.exit_core_on_close = enabled;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_startup_delay(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    secs: u32,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.startup_delay_secs = secs.min(3600);
     save_settings(&mgr.base_dir, &settings)
 }
 

@@ -154,8 +154,16 @@ fn spawn_metrics_stream(
             }
             match client.status_stream(1000).await {
                 Ok(mut stream) => {
+                    // Throttle to ~1/sec even if the core pushes faster — the
+                    // frontend renders at 1 Hz, so a flood would only waste IPC
+                    // and (historically) feed a repaint storm.
+                    let mut last_emit: Option<std::time::Instant> = None;
                     while let Ok(Some(st)) = stream.message().await {
-                        let _ = app.emit("metrics-tick", native_api::map_status(st));
+                        let now = std::time::Instant::now();
+                        if last_emit.map_or(true, |t| now.duration_since(t) >= std::time::Duration::from_millis(950)) {
+                            last_emit = Some(now);
+                            let _ = app.emit("metrics-tick", native_api::map_status(st));
+                        }
                     }
                 }
                 Err(e) => tracing::debug!(error = %e, "status stream open failed; retrying"),
@@ -332,12 +340,16 @@ pub fn shutdown_and_exit(app: &tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mgr = app.state::<manager::Manager>();
         let mut m = mgr.lock().await;
-        if m.proxy_enabled {
-            m.proxy_enabled = false;
-            let _ = proxy::set_system_proxy(false, "", "");
-        }
-        if m.running {
-            let _ = m.stop().await;
+        // Honor "exit core on close": when off, leave the core (and its system
+        // proxy) running in the background and just close the GUI.
+        if settings::load_settings(&m.base_dir).exit_core_on_close {
+            if m.proxy_enabled {
+                m.proxy_enabled = false;
+                let _ = proxy::set_system_proxy(false, "", "");
+            }
+            if m.running {
+                let _ = m.stop().await;
+            }
         }
         app.exit(0);
     });
@@ -404,6 +416,18 @@ pub fn run() {
     let allow_multiple = app_settings.allow_multiple;
     dlog(&dl, &format!("silent_start = {silent}, allow_multiple = {allow_multiple}"));
 
+    // Autostart (boot) launch: delay the whole app so the desktop stays clear
+    // until the network/other services are likely ready. The marker arg is set
+    // only on the autostart entry; manual launches don't carry it. Sleeping
+    // here — before the UAC relaunch, which forwards only --elevated — delays
+    // the app exactly once.
+    let autostarted = std::env::args().any(|a| a == "--autostarted");
+    if autostarted && app_settings.startup_delay_secs > 0 {
+        let d = app_settings.startup_delay_secs.min(3600);
+        dlog(&dl, &format!("autostart launch — delaying {d}s before init"));
+        std::thread::sleep(std::time::Duration::from_secs(d as u64));
+    }
+
     // Relaunch elevated (UAC) before building the app so the core can use TUN
     if elevation::should_exit_for_elevation(app_settings.run_as_admin) {
         dlog(&dl, "relaunching elevated; exiting unelevated instance");
@@ -429,7 +453,9 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            // Marker arg so the app can detect a boot/autostart launch and apply
+            // the configured startup delay (see run() above).
+            Some(vec!["--autostarted".into()]),
         ))
         .manage(mgr)
         .manage(grp)
@@ -468,6 +494,9 @@ pub fn run() {
             settings::set_lang,
             settings::set_allow_multiple,
             settings::set_close_to_tray,
+            settings::set_auto_start_core,
+            settings::set_exit_core_on_close,
+            settings::set_startup_delay,
             logbus::get_logs,
             logbus::clear_logs,
             proxy::enable_uwp_loopback,

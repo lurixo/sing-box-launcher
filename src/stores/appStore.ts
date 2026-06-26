@@ -197,9 +197,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   restartCore: async () => {
     set({ loading: true, error: null });
     try {
-      await invoke<ConfigInfo>("restart_core");
+      // Make the restart perceptible: stop (UI shows "stopped") → brief gap →
+      // start, instead of an instant atomic swap the user can't see.
+      await invoke("stop_core");
+      set({ status: await invoke<CoreStatus>("get_status"), groups: [], delays: {} });
+      await new Promise((r) => setTimeout(r, 800));
+      await invoke<ConfigInfo>("start_core");
       const status = await invoke<CoreStatus>("get_status");
-      set({ status, loading: false, delays: {} });
+      set({ status, loading: false });
       setTimeout(() => get().fetchGroups(), 1500);
     } catch (e) {
       set({ error: String(e), loading: false });

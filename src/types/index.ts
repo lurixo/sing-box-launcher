@@ -28,6 +28,9 @@ export interface AppSettings {
   lang: string;
   allow_multiple: boolean;
   close_to_tray: boolean;
+  auto_start_core: boolean;
+  exit_core_on_close: boolean;
+  startup_delay_secs: number;
 }
 
 export interface LogLine {
