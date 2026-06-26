@@ -59,33 +59,35 @@ function countryCodeToFlag(cc: string): string {
 // Compact outbound IP(s) shown inline in the status card, right after uptime.
 // Shows both IPv4 and IPv6 (whatever the backend's domain-strategy-aware
 // trace returns), font-scaled per address so long IPv6 never overflows/wraps.
+// Module-level cache so switching pages back shows the last-known IP instantly
+// (no remount flash). refreshSignal (ipNonce) is bumped ONLY on a real outbound
+// change (clash-mode or node switch), so we re-resolve only when it differs from
+// the nonce the cache was fetched at — a plain remount keeps the same nonce.
+let ipCache: OutboundIpInfo[] = [];
+let ipCacheNonce = -1;
+
 function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
   const running = useAppStore((s) => s.status.running);
-  const [lines, setLines] = useState<OutboundIpInfo[]>([]);
+  const [lines, setLines] = useState<OutboundIpInfo[]>(ipCache);
   const [copied, setCopied] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (!running) { setLines([]); return; }
-    try {
-      setLines(await invoke<OutboundIpInfo[]>("get_outbound_ip"));
-    } catch {
-      setLines([]);
-    }
-  }, [running]);
-
   useEffect(() => {
-    if (!running) { setLines([]); return; }
-    const timer = setTimeout(refresh, 800);
-    return () => clearTimeout(timer);
-  }, [running, refresh]);
-
-  // After a clash-mode / node switch the route changes — re-resolve once the
-  // new route settles.
-  useEffect(() => {
-    if (!running || refreshSignal === 0) return;
-    const timer = setTimeout(refresh, 600);
-    return () => clearTimeout(timer);
-  }, [refreshSignal, running, refresh]);
+    if (!running) { setLines([]); ipCache = []; ipCacheNonce = -1; return; }
+    if (refreshSignal === ipCacheNonce) return; // remount with no real change → keep cache
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await invoke<OutboundIpInfo[]>("get_outbound_ip");
+        if (cancelled) return;
+        setLines(res);
+        ipCache = res;
+        ipCacheNonce = refreshSignal;
+      } catch {
+        /* keep last known */
+      }
+    }, refreshSignal <= 0 ? 800 : 600);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [running, refreshSignal]);
 
   const copy = (ip: string) => {
     navigator.clipboard?.writeText(ip).then(() => {
@@ -98,21 +100,26 @@ function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-      {lines.map((info) => (
-        <button
-          key={info.ip}
-          onClick={() => copy(info.ip)}
-          title={`${info.ip}${info.asn ? "  ·  " + info.asn : ""}`}
-          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", maxWidth: "100%" }}
-        >
-          <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1, fontFamily: "'Twemoji Country Flags', 'Segoe UI Emoji', sans-serif" }}>{countryCodeToFlag(info.country)}</span>
-          <span style={{ fontFamily: "monospace", fontSize: ipFont(info.ip), fontWeight: 700, color: "var(--text-primary)", whiteSpace: "nowrap" }}>{info.ip}</span>
-          {info.asn && (
-            <span style={{ fontSize: 10, color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{info.asn}</span>
-          )}
-          {copied === info.ip && <span style={{ fontSize: 10, color: "var(--accent-default)", flexShrink: 0 }}>✓</span>}
-        </button>
-      ))}
+      {lines.map((info) => {
+        // ASN + IP share one length-scaled monospace size so the two read as a
+        // consistent pair and a long IPv6 still fits.
+        const fs = ipFont(info.asn + info.ip);
+        return (
+          <button
+            key={info.ip}
+            onClick={() => copy(info.ip)}
+            title={`${info.asn ? info.asn + "  ·  " : ""}${info.ip}`}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", maxWidth: "100%" }}
+          >
+            <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1, fontFamily: "'Twemoji Country Flags', 'Segoe UI Emoji', sans-serif" }}>{countryCodeToFlag(info.country)}</span>
+            {info.asn && (
+              <span style={{ fontFamily: "monospace", fontSize: fs, fontWeight: 700, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{info.asn}</span>
+            )}
+            <span style={{ fontFamily: "monospace", fontSize: fs, fontWeight: 700, color: "var(--text-primary)", whiteSpace: "nowrap" }}>{info.ip}</span>
+            {copied === info.ip && <span style={{ fontSize: 10, color: "var(--accent-default)", flexShrink: 0 }}>✓</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -252,7 +259,7 @@ function ClashModeSelector({ onModeChanged }: { onModeChanged?: () => void }) {
   );
 }
 
-function StatTile({ icon, label, value, accent, onClick }: { icon: React.ReactNode; label: string; value: string; accent?: string; onClick?: () => void }) {
+function StatTile({ icon, label, value, accent, onClick, upcase = true }: { icon: React.ReactNode; label: string; value: string; accent?: string; onClick?: () => void; upcase?: boolean }) {
   return (
     <div
       onClick={onClick}
@@ -261,7 +268,7 @@ function StatTile({ icon, label, value, accent, onClick }: { icon: React.ReactNo
       title={onClick ? label : undefined}
       onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
       style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", borderRadius: "var(--radius-sm)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4, minWidth: 0, cursor: onClick ? "pointer" : undefined }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 11, textTransform: upcase ? "uppercase" : "none", letterSpacing: "0.03em" }}>
         <span style={{ display: "flex", color: accent || "var(--text-tertiary)" }}>{icon}</span>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
       </div>
@@ -325,7 +332,7 @@ const MetricsOverview = memo(function MetricsOverview() {
         <StatTile icon={<ArrowUpRegular style={{ fontSize: 14 }} />} label={t("dashboard.upSpeed")} value={dash(formatSpeed(last.up))} accent="var(--status-success)" />
         <StatTile icon={<ArrowDownRegular style={{ fontSize: 14 }} />} label={t("dashboard.downSpeed")} value={dash(formatSpeed(last.down))} accent="var(--accent-default)" />
         <StatTile icon={<PlugConnectedRegular style={{ fontSize: 14 }} />} label={t("dashboard.connections")} value={running && m ? String(m.connections_in) : "—"} onClick={running ? () => setPage("connections") : undefined} />
-        <StatTile icon={<ServerRegular style={{ fontSize: 14 }} />} label={t("dashboard.memory")} value={running && m ? formatBytes(m.memory) : "—"} />
+        <StatTile icon={<ServerRegular style={{ fontSize: 14 }} />} label={t("dashboard.memory")} value={running && m ? formatBytes(m.memory) : "—"} upcase={false} />
         <StatTile icon={<ArrowUploadRegular style={{ fontSize: 14 }} />} label={t("dashboard.upTotal")} value={running && m ? formatBytes(m.uplink_total) : "—"} />
         <StatTile icon={<ArrowDownloadRegular style={{ fontSize: 14 }} />} label={t("dashboard.downTotal")} value={running && m ? formatBytes(m.downlink_total) : "—"} />
       </div>
