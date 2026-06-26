@@ -368,6 +368,7 @@ pub fn run() {
             settings::set_run_as_admin,
             settings::set_log_level,
             settings::set_log_persist,
+            settings::set_lang,
             logbus::get_logs,
             logbus::clear_logs,
             proxy::enable_uwp_loopback,

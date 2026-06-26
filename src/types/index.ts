@@ -25,6 +25,7 @@ export interface AppSettings {
   run_as_admin: boolean;
   log_level: string;
   log_persist: boolean;
+  lang: string;
 }
 
 export interface LogLine {

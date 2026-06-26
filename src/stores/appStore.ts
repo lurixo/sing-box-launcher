@@ -132,6 +132,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setLang: (lang) => {
     save(STORAGE_LANG, lang);
     set({ lang });
+    // Persist for the Rust side (tray menu) too; best-effort.
+    invoke("set_lang", { lang }).catch(() => {});
   },
 
   fetchSystemAccent: async () => {

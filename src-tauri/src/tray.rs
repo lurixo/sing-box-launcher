@@ -1,6 +1,5 @@
 use tauri::{
-    image::Image,
-    menu::{MenuBuilder, MenuItemBuilder},
+    menu::{Menu, MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager,
 };
@@ -8,41 +7,73 @@ use tracing::error;
 
 use crate::manager;
 
-/// Tray icon colors for different states
-const COLOR_STOPPED: (u8, u8, u8) = (150, 150, 150); // gray
-const COLOR_RUNNING: (u8, u8, u8) = (29, 185, 84);   // green
-const COLOR_PROXY: (u8, u8, u8) = (0, 120, 212);     // blue (Windows accent)
+const TOOLTIP: &str = "sing-box launcher";
 
-/// Build and register the system tray
-pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItemBuilder::with_id("show", "Show Window").build(app)?;
-    let start = MenuItemBuilder::with_id("start", "Start").build(app)?;
-    let stop = MenuItemBuilder::with_id("stop", "Stop").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+/// Minimal tray-menu localization — the app's only Rust-side i18n.
+fn tr(lang: &str, key: &str) -> &'static str {
+    let zh = lang == "zh-CN";
+    match key {
+        "show" => if zh { "显示窗口" } else { "Show Window" },
+        "start" => if zh { "启动" } else { "Start" },
+        "stop" => if zh { "停止" } else { "Stop" },
+        "connections" => if zh { "活动连接" } else { "Active Connections" },
+        "quit" => if zh { "退出" } else { "Quit" },
+        "tip.stopped" => if zh { "sing-box launcher — 已停止" } else { "sing-box launcher — stopped" },
+        "tip.proxy" => if zh { "sing-box launcher — 代理已启用" } else { "sing-box launcher — proxy enabled" },
+        "tip.running" => if zh { "sing-box launcher — 运行中" } else { "sing-box launcher — running" },
+        _ => "",
+    }
+}
 
-    let menu = MenuBuilder::new(app)
+/// The current UI language, read from persisted settings (defaults to zh-CN).
+fn current_lang() -> String {
+    crate::settings::load_settings(&manager::resolve_base_dir()).lang
+}
+
+/// Build the tray menu in the given language.
+fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
+    let show = MenuItemBuilder::with_id("show", tr(lang, "show")).build(app)?;
+    let start = MenuItemBuilder::with_id("start", tr(lang, "start")).build(app)?;
+    let stop = MenuItemBuilder::with_id("stop", tr(lang, "stop")).build(app)?;
+    let connections = MenuItemBuilder::with_id("connections", tr(lang, "connections")).build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", tr(lang, "quit")).build(app)?;
+
+    MenuBuilder::new(app)
         .item(&show)
         .separator()
         .item(&start)
         .item(&stop)
         .separator()
+        .item(&connections)
+        .separator()
         .item(&quit)
-        .build()?;
+        .build()
+}
 
-    let icon = make_icon(COLOR_STOPPED.0, COLOR_STOPPED.1, COLOR_STOPPED.2);
+/// Show and focus the main window.
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// Build and register the system tray.
+pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let lang = current_lang();
+    let menu = build_menu(app, &lang)?;
 
     TrayIconBuilder::with_id("main-tray")
-        .icon(icon)
-        .tooltip("sing-box launcher")
+        .icon(tauri::include_image!("icons/32x32.png"))
+        .tooltip(TOOLTIP)
         .menu(&menu)
         .on_menu_event(move |app, event| {
             let app = app.clone();
             match event.id().as_ref() {
-                "show" => {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.set_focus();
-                    }
+                "show" => show_main(&app),
+                "connections" => {
+                    show_main(&app);
+                    let _ = app.emit("navigate", "connections");
                 }
                 "start" => {
                     let app = app.clone();
@@ -78,7 +109,6 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 "quit" => {
                     let app = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        // Clean up before exit
                         let mgr = app.state::<crate::manager::Manager>();
                         let mut mgr = mgr.lock().await;
                         if mgr.proxy_enabled {
@@ -101,11 +131,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } = event
             {
-                let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+                show_main(tray.app_handle());
             }
         })
         .build(app)?;
@@ -113,59 +139,27 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Update tray icon color based on state
-pub fn update_tray_icon(app: &AppHandle, running: bool, proxy_enabled: bool) {
-    let (r, g, b) = if !running {
-        COLOR_STOPPED
-    } else if proxy_enabled {
-        COLOR_PROXY
-    } else {
-        COLOR_RUNNING
-    };
-
-    let icon = make_icon(r, g, b);
+/// Re-label the tray menu after a language change.
+pub fn rebuild_tray_menu(app: &AppHandle, lang: &str) {
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let _ = tray.set_icon(Some(icon));
-        let tooltip = if !running {
-            "sing-box launcher — stopped"
-        } else if proxy_enabled {
-            "sing-box launcher — proxy enabled"
-        } else {
-            "sing-box launcher — running"
-        };
-        let _ = tray.set_tooltip(Some(tooltip));
+        if let Ok(menu) = build_menu(app, lang) {
+            let _ = tray.set_menu(Some(menu));
+        }
     }
 }
 
-/// Generate a solid-color circular icon as an Image
-fn make_icon(r: u8, g: u8, b: u8) -> Image<'static> {
-    const SIZE: usize = 64;
-    let mut rgba = vec![0u8; SIZE * SIZE * 4];
-
-    let cx = SIZE as f64 / 2.0;
-    let cy = SIZE as f64 / 2.0;
-    let rad = SIZE as f64 / 2.0 - 4.0;
-
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let dx = x as f64 - cx + 0.5;
-            let dy = y as f64 - cy + 0.5;
-            let d2 = dx * dx + dy * dy;
-
-            let offset = (y * SIZE + x) * 4;
-            if d2 <= rad * rad {
-                rgba[offset] = r;
-                rgba[offset + 1] = g;
-                rgba[offset + 2] = b;
-                rgba[offset + 3] = 255;
-            } else if d2 <= (rad + 1.5) * (rad + 1.5) {
-                rgba[offset] = r;
-                rgba[offset + 1] = g;
-                rgba[offset + 2] = b;
-                rgba[offset + 3] = 128;
-            }
-        }
+/// Update the tray tooltip to reflect the current state. The branded icon is
+/// fixed; only the tooltip text (and its language) changes.
+pub fn update_tray_icon(app: &AppHandle, running: bool, proxy_enabled: bool) {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let lang = current_lang();
+        let key = if !running {
+            "tip.stopped"
+        } else if proxy_enabled {
+            "tip.proxy"
+        } else {
+            "tip.running"
+        };
+        let _ = tray.set_tooltip(Some(tr(&lang, key)));
     }
-
-    Image::new_owned(rgba, SIZE as u32, SIZE as u32)
 }
