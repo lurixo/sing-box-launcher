@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, memo, type CSSProperties } from "react";
+import { useEffect, useState, useCallback, useRef, memo } from "react";
 import {
   PlayRegular,
   StopRegular,
@@ -36,12 +36,16 @@ import { useT } from "../i18n/strings";
 import { formatBytes, formatSpeed } from "../lib/format";
 import type { ConfigEntry, CheckResult, OutboundIpInfo, CoreMetrics, ClashModeInfo } from "../types";
 
-const ipTokenStyle: CSSProperties = {
-  fontFamily: "monospace", fontSize: 15, fontWeight: 700,
-  background: "var(--bg-card)", border: "1px solid var(--border-card)",
-  borderRadius: 6, padding: "2px 8px", color: "var(--text-primary)",
-  cursor: "pointer", whiteSpace: "nowrap", maxWidth: "100%",
-};
+// Font size scaled to the address length so a full IPv6 never overflows the
+// inline slot in the status card (IPv4 ~14px down to ~10px for long IPv6).
+function ipFont(ip: string): number {
+  const n = ip.length;
+  if (n <= 15) return 14;
+  if (n <= 21) return 13;
+  if (n <= 28) return 12;
+  if (n <= 34) return 11;
+  return 10;
+}
 
 function countryCodeToFlag(cc: string): string {
   if (!/^[a-zA-Z]{2}$/.test(cc)) return "🏳️";
@@ -52,22 +56,21 @@ function countryCodeToFlag(cc: string): string {
   );
 }
 
-function OutboundIpCard({ refreshSignal = 0 }: { refreshSignal?: number }) {
+// Compact outbound IP(s) shown inline in the status card, right after uptime.
+// Shows both IPv4 and IPv6 (whatever the backend's domain-strategy-aware
+// trace returns), font-scaled per address so long IPv6 never overflows/wraps.
+function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
   const running = useAppStore((s) => s.status.running);
-  const t = useT();
   const [lines, setLines] = useState<OutboundIpInfo[]>([]);
-  const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!running) { setLines([]); return; }
-    setLoading(true);
     try {
       setLines(await invoke<OutboundIpInfo[]>("get_outbound_ip"));
     } catch {
       setLines([]);
     }
-    setLoading(false);
   }, [running]);
 
   useEffect(() => {
@@ -76,73 +79,40 @@ function OutboundIpCard({ refreshSignal = 0 }: { refreshSignal?: number }) {
     return () => clearTimeout(timer);
   }, [running, refresh]);
 
-  // After a clash-mode switch the route changes — re-resolve the outbound IP
-  // once the new route settles.
+  // After a clash-mode / node switch the route changes — re-resolve once the
+  // new route settles.
   useEffect(() => {
     if (!running || refreshSignal === 0) return;
     const timer = setTimeout(refresh, 600);
     return () => clearTimeout(timer);
   }, [refreshSignal, running, refresh]);
 
-  const copy = (key: string, text: string) => {
-    navigator.clipboard?.writeText(text).then(() => {
-      setCopied(key);
-      setTimeout(() => setCopied(null), 1200);
+  const copy = (ip: string) => {
+    navigator.clipboard?.writeText(ip).then(() => {
+      setCopied(ip);
+      setTimeout(() => setCopied((c) => (c === ip ? null : c)), 1200);
     }).catch(() => {});
   };
 
+  if (!running || lines.length === 0) return null;
+
   return (
-    <div className="fluent-card reveal-target" style={{ padding: "16px 18px" }}>
-      <div className="card-header" style={{ display: "flex", alignItems: "center" }}>
-        <GlobeRegular style={{ fontSize: 16 }} />
-        {t("dashboard.outboundIp")}
+    <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+      {lines.map((info) => (
         <button
-          className="fluent-btn reveal-target"
-          onClick={refresh}
-          disabled={!running || loading}
-          title={t("dashboard.refresh")}
-          aria-label={t("dashboard.refresh")}
-          style={{ marginLeft: "auto", minHeight: 26, padding: "2px 8px", fontSize: 11 }}
+          key={info.ip}
+          onClick={() => copy(info.ip)}
+          title={`${info.ip}${info.asn ? "  ·  " + info.asn : ""}`}
+          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", maxWidth: "100%" }}
         >
-          {loading ? (
-            <span className="progress-ring" style={{ width: 12, height: 12, borderWidth: 2 }} />
-          ) : (
-            <ArrowSyncRegular style={{ fontSize: 14 }} />
+          <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1, fontFamily: "'Twemoji Country Flags', 'Segoe UI Emoji', sans-serif" }}>{countryCodeToFlag(info.country)}</span>
+          <span style={{ fontFamily: "monospace", fontSize: ipFont(info.ip), fontWeight: 700, color: "var(--text-primary)", whiteSpace: "nowrap" }}>{info.ip}</span>
+          {info.asn && (
+            <span style={{ fontSize: 10, color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{info.asn}</span>
           )}
+          {copied === info.ip && <span style={{ fontSize: 10, color: "var(--accent-default)", flexShrink: 0 }}>✓</span>}
         </button>
-      </div>
-      {!running ? (
-        <div style={{ fontSize: 14, color: "var(--text-tertiary)" }}>—</div>
-      ) : lines.length === 0 ? (
-        <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
-          {loading ? "…" : t("dashboard.ipUnknown")}
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {lines.map((info) => (
-            <div key={info.ip} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <span style={{ fontSize: 18, flexShrink: 0, fontFamily: "'Twemoji Country Flags', 'Segoe UI Emoji', sans-serif" }}>{countryCodeToFlag(info.country)}</span>
-              {info.asn && (
-                <button onClick={() => copy(`${info.ip}:asn`, info.asn)} title={info.asn} style={ipTokenStyle}>
-                  {info.asn}
-                </button>
-              )}
-              <button
-                onClick={() => copy(`${info.ip}:ip`, info.ip)}
-                title={info.ip}
-                style={{ ...ipTokenStyle, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" }}
-              >
-                {info.ip}
-              </button>
-              {(copied === `${info.ip}:ip` || copied === `${info.ip}:asn`) && (
-                <span style={{ fontSize: 11, color: "var(--accent-default)", flexShrink: 0 }}>
-                  {t("dashboard.copied")}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      ))}
     </div>
   );
 }
@@ -305,12 +275,16 @@ function StatTile({ icon, label, value, accent, onClick }: { icon: React.ReactNo
 const MAX_SAMPLES = 60;
 const SCALE_FLOOR = 1024; // 1 KB/s — keeps the idle scale stable (no flicker)
 
+// Persists the last metrics across page switches so returning to the dashboard
+// shows the last-known values immediately instead of blanking until the next tick.
+let metricsCache: { m: CoreMetrics | null; samples: { up: number; down: number }[] } = { m: null, samples: [] };
+
 const MetricsOverview = memo(function MetricsOverview() {
   const running = useAppStore((s) => s.status.running);
   const setPage = useAppStore((s) => s.setPage);
   const t = useT();
-  const [m, setM] = useState<CoreMetrics | null>(null);
-  const [samples, setSamples] = useState<{ up: number; down: number }[]>([]);
+  const [m, setM] = useState<CoreMetrics | null>(metricsCache.m);
+  const [samples, setSamples] = useState<{ up: number; down: number }[]>(metricsCache.samples);
   const latest = useRef<CoreMetrics | null>(null);
 
   // Buffer incoming ticks in a ref and render at a fixed 1 Hz cadence. This
@@ -318,7 +292,7 @@ const MetricsOverview = memo(function MetricsOverview() {
   // mis-throttled) status stream can no longer drive a re-render storm — which
   // was both the chart "too-fast flicker" and the WebView2 renderer crash.
   useEffect(() => {
-    if (!running) { setM(null); setSamples([]); latest.current = null; return; }
+    if (!running) { setM(null); setSamples([]); latest.current = null; metricsCache = { m: null, samples: [] }; return; }
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     (async () => {
@@ -330,7 +304,11 @@ const MetricsOverview = memo(function MetricsOverview() {
       const cur = latest.current;
       if (!cur) return;
       setM(cur);
-      setSamples((s) => [...s, { up: Math.max(0, cur.uplink), down: Math.max(0, cur.downlink) }].slice(-MAX_SAMPLES));
+      setSamples((s) => {
+        const next = [...s, { up: Math.max(0, cur.uplink), down: Math.max(0, cur.downlink) }].slice(-MAX_SAMPLES);
+        metricsCache = { m: cur, samples: next };
+        return next;
+      });
     }, 1000);
     return () => { cancelled = true; unlisten?.(); clearInterval(flush); };
   }, [running]);
@@ -342,7 +320,7 @@ const MetricsOverview = memo(function MetricsOverview() {
 
   return (
     <div className="fluent-card reveal-target" style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
-      <div className="card-header" style={{ marginBottom: 0 }}>{t("dashboard.traffic")}</div>
+      <div className="card-header" style={{ marginBottom: 0 }}>{t("dashboard.overview")}</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
         <StatTile icon={<ArrowUpRegular style={{ fontSize: 14 }} />} label={t("dashboard.upSpeed")} value={dash(formatSpeed(last.up))} accent="var(--status-success)" />
         <StatTile icon={<ArrowDownRegular style={{ fontSize: 14 }} />} label={t("dashboard.downSpeed")} value={dash(formatSpeed(last.down))} accent="var(--accent-default)" />
@@ -715,6 +693,7 @@ export function Dashboard() {
           </span>
         </div>
         <Uptime />
+        <OutboundIpInline refreshSignal={ipNonce} />
         <div style={{ marginLeft: "auto" }}>
           <ClashModeSelector onModeChanged={bumpIp} />
         </div>
@@ -744,7 +723,8 @@ export function Dashboard() {
           <button
             className={`fluent-btn reveal-target ${status.proxy_enabled ? "accent" : ""}`}
             onClick={toggleProxy}
-            disabled={!status.running || loading}
+            disabled={!status.running || !status.proxy_server || loading}
+            title={status.running && !status.proxy_server ? t("dashboard.noProxyServer") : undefined}
           >
             <ShieldCheckmarkRegular style={{ fontSize: 16 }} />
             {status.proxy_enabled ? t("dashboard.systemProxyOn") : t("dashboard.systemProxyOff")}
@@ -761,9 +741,6 @@ export function Dashboard() {
 
       {/* Proxy groups */}
       <ProxyGroups />
-
-      {/* Outbound IP */}
-      <OutboundIpCard refreshSignal={ipNonce} />
 
       {/* ─── Configuration ─── */}
       <div className="fluent-card" style={{ padding: 0, overflow: "hidden" }}>

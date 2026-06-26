@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { applyThemeTokens, type ThemeMode } from "../lib/colorEngine";
 import type { Lang } from "../i18n/strings";
 import type {
@@ -196,17 +197,26 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   restartCore: async () => {
     set({ loading: true, error: null });
+    const win = getCurrentWindow();
     try {
-      // Make the restart perceptible: stop (UI shows "stopped") → brief gap →
-      // start, instead of an instant atomic swap the user can't see.
+      // Visible restart: clearly show the app "exit" (stop core + hide window),
+      // a perceptible pause, then bring it back (start core + raise window) —
+      // so the user sees two distinct phases rather than an instant swap.
       await invoke("stop_core");
       set({ status: await invoke<CoreStatus>("get_status"), groups: [], delays: {} });
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 450));   // let "stopped" register
+      await win.hide();                                // visible exit
+      await new Promise((r) => setTimeout(r, 1500));   // perceptible gap
       await invoke<ConfigInfo>("start_core");
       const status = await invoke<CoreStatus>("get_status");
       set({ status, loading: false });
+      try {
+        await win.unminimize(); await win.show(); await win.setFocus();
+        await win.setAlwaysOnTop(true); await win.setAlwaysOnTop(false);
+      } catch { /* noop */ }
       setTimeout(() => get().fetchGroups(), 1500);
     } catch (e) {
+      try { await win.show(); await win.setFocus(); } catch { /* noop */ }
       set({ error: String(e), loading: false });
     }
   },

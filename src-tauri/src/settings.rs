@@ -53,8 +53,8 @@ pub struct AppSettings {
     /// Closing the window minimizes to tray instead of quitting. Default: on.
     #[serde(default = "default_true")]
     pub close_to_tray: bool,
-    /// Start the core automatically when the app launches. Default: on.
-    #[serde(default = "default_true")]
+    /// Start the core automatically when the app launches. Default: off.
+    #[serde(default)]
     pub auto_start_core: bool,
     /// Stop the core when the app actually exits (not on minimize-to-tray). Default: on.
     #[serde(default = "default_true")]
@@ -62,6 +62,10 @@ pub struct AppSettings {
     /// Seconds to delay the whole app on an autostart (boot) launch. Default: 30.
     #[serde(default = "default_startup_delay")]
     pub startup_delay_secs: u32,
+    /// Pass --disable-gpu-compositing to WebView2 (renderer-crash backstop).
+    /// Dormant by default; flip on only if the WebView2 crash recurs.
+    #[serde(default)]
+    pub disable_gpu_compositing: bool,
 }
 
 impl Default for AppSettings {
@@ -75,9 +79,10 @@ impl Default for AppSettings {
             lang: default_lang(),
             allow_multiple: false,
             close_to_tray: true,
-            auto_start_core: true,
+            auto_start_core: false,
             exit_core_on_close: true,
             startup_delay_secs: default_startup_delay(),
+            disable_gpu_compositing: false,
         }
     }
 }
@@ -218,6 +223,17 @@ pub async fn set_startup_delay(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.startup_delay_secs = secs.min(3600);
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_disable_gpu_compositing(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.disable_gpu_compositing = enabled;
     save_settings(&mgr.base_dir, &settings)
 }
 

@@ -81,11 +81,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 // (metrics + group streams) runs, not just a bare process spawn.
                 "start" => { let _ = app.emit("tray-action", "start"); }
                 "stop" => { let _ = app.emit("tray-action", "stop"); }
-                "restart" => {
-                    // Surface the window so the stop→start transition is visible.
-                    show_main(&app);
-                    let _ = app.emit("tray-action", "restart");
-                }
+                "restart" => { let _ = app.emit("tray-action", "restart"); }
                 "connections" => {
                     show_main(&app);
                     let _ = app.emit("navigate", "connections");

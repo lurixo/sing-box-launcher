@@ -31,6 +31,7 @@ export interface AppSettings {
   auto_start_core: boolean;
   exit_core_on_close: boolean;
   startup_delay_secs: number;
+  disable_gpu_compositing: boolean;
 }
 
 export interface LogLine {

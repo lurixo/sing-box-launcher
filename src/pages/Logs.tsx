@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
+import { useAppStore } from "../stores/appStore";
 import type { AppSettings, LogLine } from "../types";
 
 const LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
@@ -40,11 +41,18 @@ export function Logs() {
   const t = useT();
   const revealRef = useReveal<HTMLDivElement>();
 
+  const running = useAppStore((s) => s.status.running);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [source, setSource] = useState<"core" | "app">("core");
   const [minLevel, setMinLevel] = useState<Level>("info");
   const [autoScroll, setAutoScroll] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast((m) => (m === msg ? null : m)), 2500);
+  };
 
   // Seed the level from the persisted kernel log level — this switch is the
   // single source of truth for verbosity (it also filters the view below).
@@ -58,11 +66,23 @@ export function Logs() {
       .catch(() => {});
   }, []);
 
-  // Change the kernel verbosity (persisted, applied on next core start) and the
-  // display filter together.
-  const changeLevel = (level: Level) => {
+  // Change the kernel verbosity + the display filter together. sing-box reads
+  // log.level only at startup (no live/reload API), so when the core is running
+  // we reload it so the new level actually takes effect — with a toast so the
+  // brief reconnect isn't mysterious. This is a *kernel* reload, distinct from
+  // the visible GUI restart on the dashboard.
+  const changeLevel = async (level: Level) => {
+    if (level === minLevel) return;
     setMinLevel(level);
-    invoke("set_log_level", { level }).catch(() => {});
+    try {
+      await invoke("set_log_level", { level });
+      if (running) {
+        await invoke("restart_core");
+        showToast(t("logs.levelRestarted", { level: level.toUpperCase() }));
+      }
+    } catch {
+      /* noop */
+    }
   };
 
   useEffect(() => {
@@ -75,12 +95,20 @@ export function Logs() {
         return merged.length > 5000 ? merged.slice(-5000) : merged;
       });
 
+    // Coalesce the live log stream: buffer incoming lines and flush on a timer
+    // so a burst can't drive a per-line re-render/repaint storm (a second
+    // WebView2 ACCESS_VIOLATION source, like the unthrottled chart was).
+    let buffer: LogLine[] = [];
+    const flush = setInterval(() => {
+      if (buffer.length) { const batch = buffer; buffer = []; merge(batch); }
+    }, 250);
+
     // Register the live listener before fetching the backlog so no line slips
     // through the gap between the snapshot and the subscription.
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     (async () => {
-      const fn = await listen<LogLine>("log-line", (e) => merge([e.payload]));
+      const fn = await listen<LogLine>("log-line", (e) => { buffer.push(e.payload); });
       if (cancelled) { fn(); return; }
       unlisten = fn;
       try {
@@ -92,6 +120,7 @@ export function Logs() {
     return () => {
       cancelled = true;
       unlisten?.();
+      clearInterval(flush);
     };
   }, []);
 
@@ -177,6 +206,12 @@ export function Logs() {
           {t("logs.clear")}
         </button>
       </div>
+
+      {toast && (
+        <div className="infobar" style={{ background: "var(--status-success-bg)", borderColor: "var(--status-success)" }}>
+          {toast}
+        </div>
+      )}
 
       {/* Log view */}
       <div

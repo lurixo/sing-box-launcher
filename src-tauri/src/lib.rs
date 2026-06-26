@@ -136,6 +136,29 @@ async fn restart_core(
     start_core(mgr, grp, app).await
 }
 
+/// Working-set memory of this GUI process, added to the core's reported memory
+/// so the dashboard's "memory" reflects the Maestro+core total. 0 off-Windows.
+#[cfg(target_os = "windows")]
+fn gui_memory() -> u64 {
+    use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    unsafe {
+        let mut counters = PROCESS_MEMORY_COUNTERS::default();
+        let cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        counters.cb = cb;
+        if GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, cb).is_ok() {
+            counters.WorkingSetSize as u64
+        } else {
+            0
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn gui_memory() -> u64 {
+    0
+}
+
 /// Stream live core metrics to the frontend, reconnecting while this core
 /// session runs. Tolerates a slow API boot and transient stream drops (like
 /// the group-load retry); exits deterministically on stop or restart by
@@ -162,7 +185,11 @@ fn spawn_metrics_stream(
                         let now = std::time::Instant::now();
                         if last_emit.map_or(true, |t| now.duration_since(t) >= std::time::Duration::from_millis(950)) {
                             last_emit = Some(now);
-                            let _ = app.emit("metrics-tick", native_api::map_status(st));
+                            // Show the Maestro+core total: add this GUI process's
+                            // working set to the core's reported memory.
+                            let mut metrics = native_api::map_status(st);
+                            metrics.memory = metrics.memory.saturating_add(gui_memory());
+                            let _ = app.emit("metrics-tick", metrics);
                         }
                     }
                 }
@@ -190,8 +217,11 @@ async fn toggle_system_proxy(
 ) -> Result<bool, AppError> {
     let mut mgr = mgr.lock().await;
 
-    if !mgr.running || mgr.proxy_server.is_empty() {
+    if !mgr.running {
         return Err(AppError::NotRunning);
+    }
+    if mgr.proxy_server.is_empty() {
+        return Err(AppError::NoSystemProxyServer);
     }
 
     if mgr.proxy_enabled {
@@ -416,6 +446,17 @@ pub fn run() {
     let allow_multiple = app_settings.allow_multiple;
     dlog(&dl, &format!("silent_start = {silent}, allow_multiple = {allow_multiple}"));
 
+    // Crash backstop (dormant by default): if enabled, ask WebView2 to skip GPU
+    // compositing — must be set before the webview is created.
+    if app_settings.disable_gpu_compositing {
+        // SAFETY: run() is still single-threaded here (before the Tauri builder,
+        // webview, and async runtime start), so mutating the environment is sound.
+        unsafe {
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu-compositing");
+        }
+        dlog(&dl, "disable_gpu_compositing on — WebView2 GPU compositing disabled");
+    }
+
     // Autostart (boot) launch: delay the whole app so the desktop stays clear
     // until the network/other services are likely ready. The marker arg is set
     // only on the autostart entry; manual launches don't carry it. Sleeping
@@ -497,6 +538,7 @@ pub fn run() {
             settings::set_auto_start_core,
             settings::set_exit_core_on_close,
             settings::set_startup_delay,
+            settings::set_disable_gpu_compositing,
             logbus::get_logs,
             logbus::clear_logs,
             proxy::enable_uwp_loopback,

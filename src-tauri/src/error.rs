@@ -8,6 +8,9 @@ pub enum AppError {
     #[error("Core not running")]
     NotRunning,
 
+    #[error("This config has no HTTP/SOCKS inbound (TUN-only); the system proxy has nothing to point at")]
+    NoSystemProxyServer,
+
     #[error("Config error: {0}")]
     Config(String),
 

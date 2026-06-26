@@ -79,6 +79,11 @@ impl ManagerInner {
             return Err(AppError::AlreadyRunning);
         }
 
+        // Reclaim a leftover orphan core from a previous session (e.g. the app
+        // exited with exit_core_on_close off, or crashed) so its still-bound
+        // ports don't collide with the core we're about to spawn.
+        kill_stale_core(&self.base_dir);
+
         let settings = crate::settings::load_settings(&self.base_dir);
         let config_name = settings.active_config.clone();
 
@@ -132,6 +137,10 @@ impl ManagerInner {
         }
 
         self.child = Some(child);
+        // Record the core PID so a future session can detect/kill an orphan.
+        if let Some(pid) = self.child.as_ref().and_then(|c| c.id()) {
+            let _ = std::fs::write(self.base_dir.join("core.pid"), pid.to_string());
+        }
         self.running = true;
         self.generation = self.generation.wrapping_add(1);
         self.proxy_server = info.proxy_server.clone();
@@ -162,6 +171,7 @@ impl ManagerInner {
                 self.child = None;
                 self.running = false;
                 self.started_at = None;
+                let _ = std::fs::remove_file(self.base_dir.join("core.pid"));
                 self.proxy_server.clear();
                 self.api_address.clear();
                 self.api_secret.clear();
@@ -186,6 +196,7 @@ impl ManagerInner {
         self.child = None;
         self.running = false;
         self.started_at = None;
+        let _ = std::fs::remove_file(self.base_dir.join("core.pid"));
         Ok(())
     }
 
@@ -220,6 +231,44 @@ pub fn resolve_base_dir() -> PathBuf {
 pub fn data_dir() -> PathBuf {
     resolve_base_dir().join("data")
 }
+
+/// Kill a leftover core process recorded in `core.pid` from a previous session.
+/// Verifies the PID is actually a live sing-box process before killing (guards
+/// against PID reuse), then removes the stale pidfile.
+#[cfg(target_os = "windows")]
+fn kill_stale_core(base_dir: &Path) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let pidfile = base_dir.join("core.pid");
+    let pid: u32 = match std::fs::read_to_string(&pidfile).ok().and_then(|s| s.trim().parse().ok()) {
+        Some(p) => p,
+        None => {
+            let _ = std::fs::remove_file(&pidfile);
+            return;
+        }
+    };
+
+    // Confirm the PID is a live sing-box.exe before terminating it.
+    let is_core = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("sing-box.exe"))
+        .unwrap_or(false);
+
+    if is_core {
+        warn!(pid, "killing orphan core from a previous session");
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+    let _ = std::fs::remove_file(&pidfile);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn kill_stale_core(_base_dir: &Path) {}
 
 /// Build the sing-box run command without a console window on Windows.
 fn build_command(sb_path: &Path, runtime_path: &Path, base_dir: &Path) -> Command {
