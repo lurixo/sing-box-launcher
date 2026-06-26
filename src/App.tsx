@@ -3,7 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
-import { Proxies } from "./pages/Proxies";
 import { Connections } from "./pages/Connections";
 import { Logs } from "./pages/Logs";
 import { Settings } from "./pages/Settings";
@@ -75,7 +74,6 @@ export function App() {
 
         <main style={{ flex: 1, overflow: "auto" }}>
           {page === "dashboard" && <Dashboard />}
-          {page === "proxies" && <Proxies />}
           {page === "connections" && <Connections />}
           {page === "logs" && <Logs />}
           {page === "settings" && <Settings />}

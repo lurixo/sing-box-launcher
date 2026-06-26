@@ -68,10 +68,6 @@ export const en = {
   "dashboard.memory": "Memory",
   "dashboard.upTotal": "Upload total",
   "dashboard.downTotal": "Download total",
-  "dashboard.mode": "Mode",
-  "dashboard.modeRule": "Rule",
-  "dashboard.modeGlobal": "Global",
-  "dashboard.modeDirect": "Direct",
 
   "proxies.title": "Proxies",
   "proxies.startToView": "Start the core to view proxy groups.",
@@ -227,10 +223,6 @@ export const zhCN: Record<TranslationKey, string> = {
   "dashboard.memory": "内存",
   "dashboard.upTotal": "上传总量",
   "dashboard.downTotal": "下载总量",
-  "dashboard.mode": "模式",
-  "dashboard.modeRule": "规则",
-  "dashboard.modeGlobal": "全局",
-  "dashboard.modeDirect": "直连",
 
   "proxies.title": "代理",
   "proxies.startToView": "启动内核以查看代理组。",

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, type CSSProperties } from "react";
+import { useEffect, useState, useCallback, memo, type CSSProperties } from "react";
 import {
   PlayRegular,
   StopRegular,
@@ -17,6 +17,7 @@ import {
   AddRegular,
   DeleteRegular,
   CheckmarkCircleRegular,
+  CheckmarkCircleFilled,
   EditRegular,
   ArrowLeftRegular,
   DocumentCheckmarkRegular,
@@ -24,12 +25,14 @@ import {
   ArrowDownRegular,
   ArrowUploadRegular,
   ArrowDownloadRegular,
+  FlashRegular,
+  SearchRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useReveal } from "../hooks/useReveal";
-import { useT, type TranslationKey } from "../i18n/strings";
+import { useT } from "../i18n/strings";
 import { formatBytes, formatSpeed } from "../lib/format";
 import type { ConfigEntry, CheckResult, OutboundIpInfo, CoreMetrics, ClashModeInfo } from "../types";
 
@@ -49,7 +52,7 @@ function countryCodeToFlag(cc: string): string {
   );
 }
 
-function OutboundIpCard() {
+function OutboundIpCard({ refreshSignal = 0 }: { refreshSignal?: number }) {
   const running = useAppStore((s) => s.status.running);
   const t = useT();
   const [lines, setLines] = useState<OutboundIpInfo[]>([]);
@@ -72,6 +75,14 @@ function OutboundIpCard() {
     const timer = setTimeout(refresh, 800);
     return () => clearTimeout(timer);
   }, [running, refresh]);
+
+  // After a clash-mode switch the route changes — re-resolve the outbound IP
+  // once the new route settles.
+  useEffect(() => {
+    if (!running || refreshSignal === 0) return;
+    const timer = setTimeout(refresh, 600);
+    return () => clearTimeout(timer);
+  }, [refreshSignal, running, refresh]);
 
   const copy = (key: string, text: string) => {
     navigator.clipboard?.writeText(text).then(() => {
@@ -146,44 +157,57 @@ function formatUptime(secs: number): string {
   return `${s}s`;
 }
 
-// ─── Live traffic chart (hand-rolled SVG, no chart dependency) ───────────────
-function TrafficChart({ samples }: { samples: { up: number; down: number }[] }) {
+// Self-contained uptime ticker so the whole dashboard does NOT re-render every
+// second (that, plus an unstable chart scale, was the source of the flicker).
+function Uptime() {
+  const running = useAppStore((s) => s.status.running);
+  const base = useAppStore((s) => s.status.uptime_secs);
+  const [secs, setSecs] = useState(base);
+  useEffect(() => {
+    setSecs(base);
+    if (!running) return;
+    const id = setInterval(() => setSecs((p) => p + 1), 1000);
+    return () => clearInterval(id);
+  }, [running, base]);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 13 }}>
+      <TimerRegular style={{ fontSize: 15 }} />
+      <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatUptime(running ? secs : 0)}</span>
+    </div>
+  );
+}
+
+// ─── Live traffic chart (hand-rolled SVG, memoized, stable y-scale) ──────────
+function niceCeil(v: number): number {
+  if (v <= 0) return 1;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / pow;
+  const m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return m * pow;
+}
+
+const TrafficChart = memo(function TrafficChart({ samples, max }: { samples: { up: number; down: number }[]; max: number }) {
   const W = 300;
   const H = 72;
   const data = samples.length ? samples : [{ up: 0, down: 0 }];
   const n = data.length;
-  const max = Math.max(1, ...data.map((s) => Math.max(s.up, s.down)));
   const xAt = (i: number) => (n <= 1 ? W : (i / (n - 1)) * W);
   const yAt = (v: number) => H - 2 - (v / max) * (H - 8);
   const points = (key: "up" | "down") =>
     data.map((s, i) => `${xAt(i).toFixed(1)},${yAt(s[key]).toFixed(1)}`).join(" ");
-  const area = (key: "up" | "down") => {
-    const pts = points(key).split(" ").join(" L");
-    return `M${xAt(0).toFixed(1)},${H} L${pts} L${W},${H} Z`;
-  };
+  const area = (key: "up" | "down") => `M${xAt(0).toFixed(1)},${H} L${points(key).split(" ").join(" L")} L${W},${H} Z`;
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
-      style={{ width: "100%", height: 72, display: "block" }}
-    >
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: 72, display: "block" }}>
       <path d={area("down")} fill="var(--accent-default)" opacity={0.12} />
       <path d={area("up")} fill="var(--status-success)" opacity={0.12} />
       <polyline points={points("down")} fill="none" stroke="var(--accent-default)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
       <polyline points={points("up")} fill="none" stroke="var(--status-success)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
     </svg>
   );
-}
+});
 
-const MODE_KEYS: Record<string, TranslationKey> = {
-  rule: "dashboard.modeRule",
-  global: "dashboard.modeGlobal",
-  direct: "dashboard.modeDirect",
-};
-
-function ClashModeSelector() {
+function ClashModeSelector({ onModeChanged }: { onModeChanged?: () => void }) {
   const running = useAppStore((s) => s.status.running);
-  const t = useT();
   const [info, setInfo] = useState<ClashModeInfo | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -208,6 +232,7 @@ function ClashModeSelector() {
     setInfo({ ...info, current: mode });
     try {
       await invoke("set_clash_mode", { mode });
+      onModeChanged?.();
     } catch {
       refresh();
     }
@@ -216,36 +241,29 @@ function ClashModeSelector() {
 
   if (!running || !info || info.modes.length === 0) return null;
 
-  const label = (m: string) => {
-    const key = MODE_KEYS[m.toLowerCase()];
-    return key ? t(key) : m.charAt(0).toUpperCase() + m.slice(1);
-  };
-
+  // Show the core's raw mode values verbatim — no translation, no extra label.
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("dashboard.mode")}</span>
-      <div style={{ display: "inline-flex", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
-        {info.modes.map((mode, i) => {
-          const active = mode.toLowerCase() === info.current.toLowerCase();
-          return (
-            <button
-              key={mode}
-              onClick={() => setMode(mode)}
-              disabled={busy}
-              style={{
-                border: "none",
-                borderLeft: i === 0 ? "none" : "1px solid var(--border-default)",
-                background: active ? "var(--accent-btn-bg)" : "transparent",
-                color: active ? "var(--accent-btn-text)" : "var(--text-primary)",
-                fontFamily: "inherit", fontSize: 12, padding: "5px 14px",
-                cursor: busy ? "default" : "pointer",
-              }}
-            >
-              {label(mode)}
-            </button>
-          );
-        })}
-      </div>
+    <div style={{ display: "inline-flex", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
+      {info.modes.map((mode, i) => {
+        const active = mode.toLowerCase() === info.current.toLowerCase();
+        return (
+          <button
+            key={mode}
+            onClick={() => setMode(mode)}
+            disabled={busy}
+            style={{
+              border: "none",
+              borderLeft: i === 0 ? "none" : "1px solid var(--border-default)",
+              background: active ? "var(--accent-btn-bg)" : "transparent",
+              color: active ? "var(--accent-btn-text)" : "var(--text-primary)",
+              fontFamily: "inherit", fontSize: 12, padding: "5px 14px",
+              cursor: busy ? "default" : "pointer",
+            }}
+          >
+            {mode}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -265,8 +283,9 @@ function StatTile({ icon, label, value, accent }: { icon: React.ReactNode; label
 }
 
 const MAX_SAMPLES = 60;
+const SCALE_FLOOR = 1024; // 1 KB/s — keeps the idle scale stable (no flicker)
 
-function MetricsOverview() {
+const MetricsOverview = memo(function MetricsOverview() {
   const running = useAppStore((s) => s.status.running);
   const t = useT();
   const [m, setM] = useState<CoreMetrics | null>(null);
@@ -280,8 +299,6 @@ function MetricsOverview() {
       const fn = await listen<CoreMetrics>("metrics-tick", (e) => {
         const cur = e.payload;
         setM(cur);
-        // Use the core's own per-second rate; reconstructing it from the JS
-        // event-delivery clock spikes when ticks arrive in a burst.
         setSamples((s) => [...s, { up: Math.max(0, cur.uplink), down: Math.max(0, cur.downlink) }].slice(-MAX_SAMPLES));
       });
       if (cancelled) { fn(); return; }
@@ -291,12 +308,14 @@ function MetricsOverview() {
   }, [running]);
 
   const last = samples[samples.length - 1] ?? { up: 0, down: 0 };
+  const peak = samples.length ? Math.max(...samples.map((s) => Math.max(s.up, s.down))) : 0;
+  const chartMax = Math.max(SCALE_FLOOR, niceCeil(peak));
   const dash = (v: string) => (running ? v : "—");
 
   return (
     <div className="fluent-card reveal-target" style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
       <div className="card-header" style={{ marginBottom: 0 }}>{t("dashboard.traffic")}</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
         <StatTile icon={<ArrowUpRegular style={{ fontSize: 14 }} />} label={t("dashboard.upSpeed")} value={dash(formatSpeed(last.up))} accent="var(--status-success)" />
         <StatTile icon={<ArrowDownRegular style={{ fontSize: 14 }} />} label={t("dashboard.downSpeed")} value={dash(formatSpeed(last.down))} accent="var(--accent-default)" />
         <StatTile icon={<PlugConnectedRegular style={{ fontSize: 14 }} />} label={t("dashboard.connections")} value={running && m ? String(m.connections_in) : "—"} />
@@ -304,7 +323,7 @@ function MetricsOverview() {
         <StatTile icon={<ArrowUploadRegular style={{ fontSize: 14 }} />} label={t("dashboard.upTotal")} value={running && m ? formatBytes(m.uplink_total) : "—"} />
         <StatTile icon={<ArrowDownloadRegular style={{ fontSize: 14 }} />} label={t("dashboard.downTotal")} value={running && m ? formatBytes(m.downlink_total) : "—"} />
       </div>
-      <TrafficChart samples={running ? samples : []} />
+      <TrafficChart samples={running ? samples : []} max={chartMax} />
       <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--text-secondary)" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <span style={{ width: 9, height: 3, borderRadius: 2, background: "var(--status-success)" }} /> {t("dashboard.upSpeed")}
@@ -315,7 +334,122 @@ function MetricsOverview() {
       </div>
     </div>
   );
+});
+
+// ─── Proxy groups (merged from the former Proxies page) ──────────────────────
+function DelayBadge({ delay, t }: { delay?: number; t: ReturnType<typeof useT> }) {
+  if (delay === undefined) return null;
+  let cls = "timeout";
+  let text = t("proxies.timeout");
+  if (delay > 0 && delay < 200) { cls = "fast"; text = `${delay}ms`; }
+  else if (delay >= 200 && delay < 500) { cls = "medium"; text = `${delay}ms`; }
+  else if (delay >= 500) { cls = "slow"; text = `${delay}ms`; }
+  return <span className={`delay-badge ${cls}`}>{text}</span>;
 }
+
+const ProxyGroups = memo(function ProxyGroups() {
+  const running = useAppStore((s) => s.status.running);
+  const groups = useAppStore((s) => s.groups);
+  const switchProxy = useAppStore((s) => s.switchProxy);
+  const testDelay = useAppStore((s) => s.testDelay);
+  const delays = useAppStore((s) => s.delays);
+  const testingGroup = useAppStore((s) => s.testingGroup);
+  const t = useT();
+  const [open, setOpen] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  if (!running || groups.length === 0) return null;
+
+  return (
+    <div className="fluent-card" style={{ padding: 0, overflow: "hidden" }}>
+      <div className="card-header" style={{ padding: "14px 18px 10px", marginBottom: 0 }}>
+        <GlobeRegular style={{ fontSize: 16 }} />
+        {t("proxies.title")}
+        <span style={{ marginLeft: 6, color: "var(--text-tertiary)", textTransform: "none", letterSpacing: 0 }}>
+          {t("proxies.groupsCount", { count: groups.length })}
+        </span>
+      </div>
+      {groups.map((g) => {
+        const isOpen = open === g.name;
+        const gd = delays[g.name];
+        const nodes = (g.all ?? []).filter((node) => !isOpen || node.toLowerCase().includes(search.toLowerCase()));
+        return (
+          <div key={g.name} style={{ borderTop: "1px solid var(--border-divider)" }}>
+            <button
+              onClick={() => { setOpen(isOpen ? null : g.name); setSearch(""); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, width: "100%",
+                padding: "12px 18px", border: "none", background: "transparent",
+                cursor: "pointer", color: "var(--text-primary)", fontFamily: "inherit", textAlign: "left",
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{g.name}</span>
+              <span style={{ fontSize: 12, color: "var(--accent-default)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                {g.now}
+              </span>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)", flexShrink: 0 }}>
+                {t("proxies.nodesCount", { count: g.all.length })}
+              </span>
+              <span style={{ display: "flex", color: "var(--text-tertiary)", flexShrink: 0 }}>
+                {isOpen ? <ChevronUpRegular /> : <ChevronDownRegular />}
+              </span>
+            </button>
+            {isOpen && (
+              <div style={{ padding: "0 18px 14px" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, background: "var(--bg-surface)", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)", padding: "4px 10px" }}>
+                    <SearchRegular style={{ fontSize: 15, color: "var(--text-tertiary)" }} />
+                    <input
+                      type="text"
+                      placeholder={t("proxies.searchNodes")}
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      style={{ border: "none", background: "transparent", outline: "none", color: "var(--text-primary)", fontSize: 13, flex: 1, fontFamily: "inherit" }}
+                    />
+                  </div>
+                  <button
+                    className="fluent-btn"
+                    onClick={() => testDelay(g.name)}
+                    disabled={testingGroup !== null}
+                    style={{ fontSize: 13, whiteSpace: "nowrap" }}
+                  >
+                    {testingGroup === g.name ? (
+                      <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                    ) : (
+                      <FlashRegular style={{ fontSize: 16 }} />
+                    )}
+                    {t("proxies.testAll")}
+                  </button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 8 }}>
+                  {nodes.map((node) => {
+                    const selected = node === g.now;
+                    return (
+                      <div
+                        key={node}
+                        className={`node-card ${selected ? "selected" : ""}`}
+                        onClick={() => switchProxy(g.name, node)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); switchProxy(g.name, node); } }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+                          {selected && <CheckmarkCircleFilled style={{ fontSize: 16, color: "var(--accent-default)", flexShrink: 0 }} />}
+                          <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node}</span>
+                        </div>
+                        <DelayBadge delay={gd?.[node]} t={t} />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
 
 export function Dashboard() {
   const { status, loading, error, startCore, stopCore, restartCore, toggleProxy, clearError } =
@@ -324,29 +458,20 @@ export function Dashboard() {
 
   const revealRef = useReveal<HTMLDivElement>();
 
-  // Uptime counter
-  const [uptime, setUptime] = useState(status.uptime_secs);
-  useEffect(() => {
-    setUptime(status.uptime_secs);
-    if (!status.running) return;
-    const interval = setInterval(() => setUptime((p) => p + 1), 1000);
-    return () => clearInterval(interval);
-  }, [status.running, status.uptime_secs]);
+  // Bumped after a clash-mode switch to trigger an outbound-IP re-resolve.
+  const [ipNonce, setIpNonce] = useState(0);
 
   // ─── Config state ─────────────────────────────────────────────────────────
-  const [configExpanded, setConfigExpanded] = useState(false);
+  const [configExpanded, setConfigExpanded] = useState(true);
   const [configs, setConfigs] = useState<ConfigEntry[]>([]);
-  // null = list view, string = detail/editor view
   const [editingName, setEditingName] = useState<string | null>(null);
   const [configText, setConfigText] = useState("");
   const [configDirty, setConfigDirty] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [configMsg, setConfigMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  // Creating
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
-  // Renaming
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState("");
 
@@ -371,14 +496,11 @@ export function Dashboard() {
     }
   }, []);
 
-  // Load list when expanded
+  // Load the config list on mount so the entry is discoverable immediately.
   useEffect(() => {
-    if (configExpanded) {
-      loadConfigList();
-    }
-  }, [configExpanded, loadConfigList]);
+    loadConfigList();
+  }, [loadConfigList]);
 
-  // If no config is active yet, make `name` the active one (first-config UX).
   const activateIfFirst = useCallback(async (name: string): Promise<boolean> => {
     try {
       const list = await invoke<ConfigEntry[]>("list_configs");
@@ -410,8 +532,6 @@ export function Dashboard() {
     setConfigSaving(false);
   };
 
-  // Format the in-editor text only. It is NOT saved — the user decides whether
-  // to keep it (the result is left dirty so Save stays enabled).
   const handleCheckFormat = async () => {
     if (!editingName) return;
     setChecking(true);
@@ -442,6 +562,8 @@ export function Dashboard() {
       setConfigMsg({ type: "err", text: String(e) });
     }
   };
+
+  const startCreate = () => { setConfigExpanded(true); setEditingName(null); setCreating(true); setNewName(""); };
 
   const handleCreate = async () => {
     const trimmed = newName.trim();
@@ -489,6 +611,7 @@ export function Dashboard() {
   };
 
   const handleImportFile = () => {
+    setConfigExpanded(true);
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".json";
@@ -566,20 +689,11 @@ export function Dashboard() {
               : t("dashboard.status.stopped")}
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 13 }}>
-          <TimerRegular style={{ fontSize: 15 }} />
-          <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatUptime(uptime)}</span>
-        </div>
+        <Uptime />
         <div style={{ marginLeft: "auto" }}>
-          <ClashModeSelector />
+          <ClashModeSelector onModeChanged={() => setIpNonce((n) => n + 1)} />
         </div>
       </div>
-
-      {/* Live metrics: traffic, connections, memory + chart */}
-      <MetricsOverview />
-
-      {/* Outbound IP */}
-      <OutboundIpCard />
 
       {/* Controls */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
@@ -617,28 +731,43 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* ─── Configuration Section ─── */}
+      {/* Live metrics */}
+      <MetricsOverview />
+
+      {/* Proxy groups */}
+      <ProxyGroups />
+
+      {/* Outbound IP */}
+      <OutboundIpCard refreshSignal={ipNonce} />
+
+      {/* ─── Configuration ─── */}
       <div className="fluent-card" style={{ padding: 0, overflow: "hidden" }}>
-        <button
-          onClick={() => setConfigExpanded(!configExpanded)}
-          style={{
-            display: "flex", alignItems: "center", gap: 8, width: "100%",
-            padding: "14px 20px", border: "none", background: "transparent",
-            cursor: "pointer", color: "var(--text-primary)", fontFamily: "inherit",
-            fontSize: 14, fontWeight: 600, textAlign: "left",
-          }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 20px" }}>
           <DocumentRegular style={{ fontSize: 18 }} />
-          {t("dashboard.configuration")}
-          <span style={{ marginLeft: "auto", display: "flex", color: "var(--text-tertiary)" }}>
-            {configExpanded ? <ChevronUpRegular /> : <ChevronDownRegular />}
-          </span>
-        </button>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{t("dashboard.configuration")}</span>
+          {editingName === null && (
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <button className="fluent-btn accent reveal-target" onClick={startCreate} style={{ fontSize: 13 }}>
+                <AddRegular style={{ fontSize: 16 }} />
+                {t("dashboard.new")}
+              </button>
+              <button className="fluent-btn reveal-target" onClick={handleImportFile} style={{ fontSize: 13 }}>
+                <ArrowImportRegular style={{ fontSize: 16 }} />
+                {t("dashboard.import")}
+              </button>
+              <button
+                onClick={() => setConfigExpanded(!configExpanded)}
+                aria-label={t("dashboard.configuration")}
+                style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-tertiary)", display: "flex", alignItems: "center" }}
+              >
+                {configExpanded ? <ChevronUpRegular /> : <ChevronDownRegular />}
+              </button>
+            </div>
+          )}
+        </div>
 
         {configExpanded && (
           <div style={{ padding: "0 20px 18px" }}>
-
-            {/* Message bar (shared between list & detail) */}
             {configMsg && (
               <div
                 className={`infobar ${configMsg.type === "err" ? "error" : ""}`}
@@ -651,10 +780,8 @@ export function Dashboard() {
               </div>
             )}
 
-            {/* ═══ Detail / Editor View ═══ */}
             {editingName !== null ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {/* Back + title */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <button
                     className="fluent-btn reveal-target"
@@ -674,8 +801,7 @@ export function Dashboard() {
                   )}
                 </div>
 
-                {/* Toolbar */}
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   {!isEditingActive && (
                     <button className="fluent-btn accent reveal-target" onClick={() => handleSetActive(editingName)} style={{ fontSize: 13 }}>
                       <CheckmarkCircleRegular style={{ fontSize: 16 }} />
@@ -719,7 +845,6 @@ export function Dashboard() {
                   </button>
                 </div>
 
-                {/* Rename inline */}
                 {renamingName === editingName && (
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <input
@@ -742,7 +867,6 @@ export function Dashboard() {
                   </div>
                 )}
 
-                {/* Editor */}
                 <textarea
                   value={configText}
                   onChange={(e) => { setConfigText(e.target.value); setConfigDirty(true); setConfigMsg(null); }}
@@ -764,44 +888,27 @@ export function Dashboard() {
                   {t("dashboard.editorHint")}
                 </div>
               </div>
-
             ) : (
-              /* ═══ List View ═══ */
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {/* Toolbar */}
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  {creating ? (
-                    <div style={{ display: "flex", gap: 6, alignItems: "center", flex: 1 }}>
-                      <input
-                        autoFocus
-                        value={newName}
-                        onChange={(e) => setNewName(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
-                        placeholder={t("dashboard.configName")}
-                        style={{
-                          border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
-                          padding: "4px 10px", fontSize: 13, background: "var(--bg-surface)",
-                          color: "var(--text-primary)", outline: "none", width: 160, height: 30, fontFamily: "inherit",
-                        }}
-                      />
-                      <button className="fluent-btn accent reveal-target" onClick={handleCreate} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>{t("common.create")}</button>
-                      <button className="fluent-btn reveal-target" onClick={() => setCreating(false)} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>{t("common.cancel")}</button>
-                    </div>
-                  ) : (
-                    <>
-                      <button className="fluent-btn reveal-target" onClick={() => { setCreating(true); setNewName(""); }} style={{ fontSize: 13 }}>
-                        <AddRegular style={{ fontSize: 16 }} />
-                        {t("dashboard.new")}
-                      </button>
-                      <button className="fluent-btn reveal-target" onClick={handleImportFile} style={{ fontSize: 13 }}>
-                        <ArrowImportRegular style={{ fontSize: 16 }} />
-                        {t("dashboard.import")}
-                      </button>
-                    </>
-                  )}
-                </div>
+                {creating && (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
+                    <input
+                      autoFocus
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
+                      placeholder={t("dashboard.configName")}
+                      style={{
+                        border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
+                        padding: "4px 10px", fontSize: 13, background: "var(--bg-surface)",
+                        color: "var(--text-primary)", outline: "none", width: 200, height: 30, fontFamily: "inherit",
+                      }}
+                    />
+                    <button className="fluent-btn accent reveal-target" onClick={handleCreate} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>{t("common.create")}</button>
+                    <button className="fluent-btn reveal-target" onClick={() => setCreating(false)} style={{ fontSize: 12, minHeight: 30, padding: "4px 10px" }}>{t("common.cancel")}</button>
+                  </div>
+                )}
 
-                {/* Config list */}
                 {configs.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "28px 0", color: "var(--text-tertiary)", fontSize: 13 }}>
                     {t("dashboard.noConfigs")}
@@ -823,7 +930,6 @@ export function Dashboard() {
                         onMouseLeave={(e) => { if (!c.active) e.currentTarget.style.background = "var(--bg-card)"; }}
                       >
                         <DocumentRegular style={{ fontSize: 16, color: "var(--text-secondary)", flexShrink: 0 }} />
-                        {/* Name + rename inline */}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           {renamingName === c.name ? (
                             <div style={{ display: "flex", gap: 4, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
@@ -853,7 +959,6 @@ export function Dashboard() {
                             {t("dashboard.active")}
                           </span>
                         )}
-                        {/* Action buttons */}
                         <div style={{ display: "flex", gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                           <button
                             className="fluent-btn reveal-target"

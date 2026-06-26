@@ -107,6 +107,6 @@ export interface CoreUpdateCheck {
 
 export type DelayMap = Record<string, number>;
 
-export type Page = "dashboard" | "proxies" | "connections" | "logs" | "settings";
+export type Page = "dashboard" | "connections" | "logs" | "settings";
 
 export type Theme = "light" | "dark" | "system";
