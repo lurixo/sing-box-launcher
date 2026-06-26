@@ -59,8 +59,10 @@ async fn start_core(
     grp: tauri::State<'_, groups::Groups>,
     app: tauri::AppHandle,
 ) -> Result<config::ConfigInfo, AppError> {
+    let mgr_arc = mgr.inner().clone();
     let mut mgr = mgr.lock().await;
     let info = mgr.start().await?;
+    let generation = mgr.generation;
 
     tray::update_tray_icon(&app, true, false);
     let _ = app.emit("core-status-changed", mgr.status());
@@ -69,7 +71,7 @@ async fn start_core(
     match NativeClient::new(&info.api_address, &info.api_secret) {
         Ok(client) => {
             // Stream live metrics (traffic/memory/connections) to the frontend.
-            spawn_metrics_stream(client.clone(), app.clone());
+            spawn_metrics_stream(client.clone(), mgr_arc, generation, app.clone());
 
             let grp = grp.inner().clone();
             let app2 = app.clone();
@@ -134,21 +136,36 @@ async fn restart_core(
     start_core(mgr, grp, app).await
 }
 
-/// Stream live core metrics to the frontend until the core stops (the stream
-/// errors out when the gRPC connection drops on shutdown, ending the loop).
-fn spawn_metrics_stream(client: NativeClient, app: tauri::AppHandle) {
+/// Stream live core metrics to the frontend, reconnecting while this core
+/// session runs. Tolerates a slow API boot and transient stream drops (like
+/// the group-load retry); exits deterministically on stop or restart by
+/// watching `running` and the start `generation`.
+fn spawn_metrics_stream(
+    client: NativeClient,
+    mgr: manager::Manager,
+    generation: u64,
+    app: tauri::AppHandle,
+) {
     tauri::async_runtime::spawn(async move {
-        let mut stream = match client.status_stream(1000).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(error = %e, "status stream unavailable");
-                return;
+        let alive = |m: &manager::ManagerInner| m.running && m.generation == generation;
+        loop {
+            if !alive(&*mgr.lock().await) {
+                break;
             }
-        };
-        while let Ok(Some(st)) = stream.message().await {
-            let _ = app.emit("metrics-tick", native_api::map_status(st));
+            match client.status_stream(1000).await {
+                Ok(mut stream) => {
+                    while let Ok(Some(st)) = stream.message().await {
+                        let _ = app.emit("metrics-tick", native_api::map_status(st));
+                    }
+                }
+                Err(e) => tracing::debug!(error = %e, "status stream open failed; retrying"),
+            }
+            if !alive(&*mgr.lock().await) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        tracing::debug!("metrics stream ended");
+        tracing::debug!("metrics stream stopped");
     });
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, type CSSProperties } from "react";
+import { useEffect, useState, useCallback, type CSSProperties } from "react";
 import {
   PlayRegular,
   StopRegular,
@@ -271,27 +271,18 @@ function MetricsOverview() {
   const t = useT();
   const [m, setM] = useState<CoreMetrics | null>(null);
   const [samples, setSamples] = useState<{ up: number; down: number }[]>([]);
-  const prev = useRef<{ up: number; down: number; ts: number } | null>(null);
 
   useEffect(() => {
-    if (!running) { setM(null); setSamples([]); prev.current = null; return; }
+    if (!running) { setM(null); setSamples([]); return; }
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     (async () => {
       const fn = await listen<CoreMetrics>("metrics-tick", (e) => {
         const cur = e.payload;
         setM(cur);
-        // Derive speed from cumulative totals — robust regardless of how the
-        // core computes its instantaneous rate.
-        const now = Date.now();
-        const p = prev.current;
-        if (p && now > p.ts) {
-          const dt = (now - p.ts) / 1000;
-          const up = Math.max(0, (cur.uplink_total - p.up) / dt);
-          const down = Math.max(0, (cur.downlink_total - p.down) / dt);
-          setSamples((s) => [...s, { up, down }].slice(-MAX_SAMPLES));
-        }
-        prev.current = { up: cur.uplink_total, down: cur.downlink_total, ts: now };
+        // Use the core's own per-second rate; reconstructing it from the JS
+        // event-delivery clock spikes when ticks arrive in a burst.
+        setSamples((s) => [...s, { up: Math.max(0, cur.uplink), down: Math.max(0, cur.downlink) }].slice(-MAX_SAMPLES));
       });
       if (cancelled) { fn(); return; }
       unlisten = fn;

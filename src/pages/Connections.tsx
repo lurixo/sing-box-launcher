@@ -39,7 +39,9 @@ export function Connections() {
     setConns([]);
   };
 
-  const sorted = [...conns].sort((a, b) => b.upload + b.download - (a.upload + a.download));
+  // Stable order (oldest first) so rows never shuffle on a poll and the close
+  // button stays put under the cursor.
+  const sorted = [...conns].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
 
   return (
     <div
