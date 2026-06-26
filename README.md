@@ -1,205 +1,177 @@
 # Maestro
 
-A lightweight Windows GUI for managing the [sing-box](https://sing-box.sagernet.org/) proxy core, built with **Tauri v2** (Rust backend + React frontend) and styled with **Windows Fluent Design System**.
+**A lightweight Windows GUI for the [sing-box](https://sing-box.sagernet.org/) proxy core** — built with **Tauri v2** (Rust backend + React/TypeScript frontend) and styled after the **Windows 11 Fluent Design System**.
+
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6)
+![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+![UI](https://img.shields.io/badge/UI-English%20%2B%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-success)
 
 > **Disclaimer:** Maestro is an independent, **third-party** GUI for the [sing-box](https://sing-box.sagernet.org/) core. It is **not affiliated with, sponsored by, or endorsed by** the sing-box project or its authors. "sing-box" is referenced only to describe what Maestro is compatible with; all sing-box trademarks and copyrights belong to their respective owners.
 
+---
+
+## Highlights
+
+- 🎛️ **One-click core control** — start, stop, and restart sing-box with automatic config injection; live status, uptime, and outbound IP at a glance.
+- 🔀 **Switchable kernel sources** — ship-bundled **lurixo** by default, or pull builds on demand from **SagerNet** or **reF1nd**, all from inside the app.
+- ⬆️ **Self-updating** — the portable build updates itself (timestamp-based, SHA-256 verified, restart-and-swap); the kernel updates independently, on your confirmation.
+- 📈 **Live traffic overview** — upload and download on a single shared-axis chart, plus connection count, core memory, and cumulative totals.
+- 🪵 **Privacy-first logs** — kept in memory only, **never written to disk**; export just the lines you pick (redacted), with a one-shot sanitized crash dump only if something actually crashes.
+- 🌐 **System proxy in one click** — toggle the Windows system proxy via the registry; clear warning when a config is TUN-only.
+- 🟢 **Color-coded tray** — the tray icon shows state at a glance: **gray** (stopped), **green** (running), **blue** (running + system proxy on).
+- 🎨 **Native Fluent look** — light/dark/system theme, dynamic Windows accent color, and a fully **bilingual UI (English / 简体中文)**.
+
+---
+
 ## Features
 
-- **Portable** — Single self-contained folder, no installer; all data lives in a `data/` folder beside the executable
-- **Bundled Core** — The `sing-box.exe` core is packaged with each build
-- **Core Updates** — Check for and download newer cores from [sing-box-releases](https://github.com/lurixo/sing-box-releases/releases) in-app
-- **Core Management** — Start, stop, and restart the sing-box process with automatic config injection
-- **Config Profiles** — Manage multiple named configs (create, edit, import, rename, delete, set active)
-- **System Proxy** — Toggle Windows system proxy via registry with one click
-- **Proxy Groups** — View and switch Selector-type proxy groups, test node latency
-- **System Tray** — Minimize to tray with color-coded status icons (gray/green/blue)
-- **Autostart** — Launch at login, with optional silent start to tray
-- **Fluent UI** — Windows 11 native look with light/dark theme and dynamic accent color
+**Core & configuration**
+- Start / stop / restart the sing-box process with automatic `clash_api` + `cache_file` injection (your original config is never modified — a `config_runtime.json` is generated).
+- Manage multiple named config profiles: create, edit, import, rename, delete, and set the active one.
+- Validate & format config JSON before saving.
+- View and switch **Selector** proxy groups, and test node latency.
+- Live **Connections** view with per-connection close and close-all.
 
-## Screenshots
+**Kernel sources & updates**
+- Choose where the sing-box core comes from: **lurixo** (bundled, default), **SagerNet**, or **reF1nd**.
+- Check, download, and apply core updates in-app — the running core keeps serving traffic during the download, and only restarts after you confirm.
+- **Clear cache** to remove `cache.db` and leftover downloaded cores (the in-use core is kept).
 
-The app's main views:
-- **Dashboard** — core status, live traffic chart, proxy groups, outbound IP, and config management
-- **Connections** — live active connections with per-connection controls
-- **Logs** — core and app logs with level filtering
-- **Settings** — theme, autostart, and core management
+**App self-update** *(portable edition)*
+- Maestro checks for a newer release and, on your confirmation, swaps its own executable and relaunches — updating only the app, never your kernel, settings, or configs.
+- Installed (setup.exe) builds intentionally don't self-update; they point you to the latest installer instead.
 
-## Prerequisites
+**Monitoring**
+- Traffic overview chart combining upload + download on one shared axis, with live speeds, active connection count, core memory usage, and cumulative up/down totals.
+- Outbound IP shown inline — click to copy.
 
-| Tool | Version | Notes |
-|------|---------|-------|
-| **Rust** | stable (1.85+) | `rustup default stable` |
-| **Node.js** | 22.x LTS | [nodejs.org](https://nodejs.org/) |
-| **Tauri CLI** | 2.x | Installed via npm devDependency |
+**Privacy & diagnostics**
+- Logs live **in memory only** and are never persisted. The core always records full detail; the in-app level filter only changes what you see.
+- Export exactly the log lines you select to a text file — credentials are best-effort redacted on the way out.
+- A single, redacted `crash-dump.txt` is written **only** on a real crash (panic, unexpected core exit, or an unclean prior shutdown), and surfaced on the next launch.
 
-### Windows-specific
+**System integration**
+- One-click Windows **system proxy** toggle (registry + WinINet).
+- **Run as administrator** relaunch (UAC) for TUN-mode configs.
+- **Autostart** at login, optional **silent start** to tray, and a configurable **startup delay** for boot autostart (lets the network settle).
+- **Close to tray**, **exit core on close**, **start core on launch**, **allow multiple instances**, and a **UWP loopback** exemption helper.
 
-This project targets **Windows only**. The system proxy feature uses Windows Registry and WinINet APIs.
+**Appearance & language**
+- Light / dark / system theme.
+- Accent color: follow the Windows accent, pick a preset, or set a custom color (Maestro derives the full tonal scale from it).
+- Full **English / 简体中文** interface (the UI defaults to 简体中文).
 
-## Setup
+---
+
+## Installation
+
+Maestro is **Windows-only** and ships in two editions on the [Releases page](https://github.com/lurixo/Maestro/releases). Both bundle the sing-box core — no separate core download or installation step.
+
+| | **Portable** *(recommended)* | **Installer** |
+|---|---|---|
+| File | `maestro-<version>-windows-amd64v3-portable.zip` | `maestro-<version>-windows-amd64v3-setup.exe` |
+| Install | Unzip anywhere and run `Maestro.exe` | Run the NSIS installer (per-user, no admin needed) |
+| Data location | `data/` folder beside the executable | `data/` folder inside the install directory |
+| **Self-update** | ✅ Updates itself in place | ❌ Update by downloading a new installer |
+| Add/Remove Programs | No entry (just delete the folder) | Registered; uninstallable from Windows |
+
+**Which should I pick?** Use the **portable** edition if you want hassle-free, in-app self-updates and a self-contained folder you can move or delete freely. Use the **installer** if you prefer a traditional, system-registered install — it won't be replaced by the portable self-updater.
+
+### System requirements
+
+- **Windows 10 or 11** (64-bit).
+- A **CPU that supports the x86-64-v3 microarchitecture** (AVX2 / BMI2 / FMA) — Intel Haswell (2013) / AMD Excavator and newer. Both Maestro and the bundled core are built for this baseline; the kernel already requires it, so Maestro adds no new hardware requirement.
+- The **Microsoft Edge WebView2** runtime (preinstalled on Windows 11 and most Windows 10 systems).
+- **Administrator rights** are required only for **TUN-mode** configs; Maestro can relaunch itself with a UAC prompt.
+
+---
+
+## Getting started
+
+1. **Download** the [portable zip or installer](https://github.com/lurixo/Maestro/releases) and launch **Maestro**.
+2. On the **Dashboard**, add a config: click **New** to paste sing-box config JSON, or **Import** a `.json` file. Use **Check & Format** to validate it, then **Set Active**.
+3. Click **Start** to launch the core. Status, uptime, traffic, and your outbound IP appear live.
+4. Toggle **System Proxy** to route Windows apps through it (configs with only a TUN inbound don't need this — Maestro will tell you).
+5. Pick a node in the proxy groups on the Dashboard, or test node latency to choose the fastest.
+6. Close the window to send Maestro to the **tray** — the icon color tells you the state (gray / green / blue). Left-click the tray to bring the window back; right-click for quick start/stop/restart.
+
+> **TUN mode:** if your config uses a TUN inbound, enable **Run as administrator** in **Settings → General** (Maestro relaunches with a UAC prompt). Without elevation the core may fail to start the TUN interface.
+
+---
+
+## Kernel sources
+
+Maestro can fetch the sing-box core from three sources, selectable in **Settings → Core → Kernel source**:
+
+| Source | How it's tracked | Notes |
+|--------|------------------|-------|
+| **lurixo** *(default)* | Bundled with every Maestro build; compared by monotonic build id | The trusted default — releases carry a published SHA-256 that Maestro **requires** before installing. |
+| **SagerNet** | Official upstream `SagerNet/sing-box` GitHub Releases, highest semantic version (pre-releases included) | Fetched on demand. |
+| **reF1nd** | `reF1nd/sing-box-releases` GitHub Releases, highest semantic version | Fetched on demand. |
+
+**Switching is safe and explicit.** Pick a source, then **Check** → **Download**. The download is staged next to the running core (which keeps serving traffic); Maestro then asks **"Apply new core?"** and only swaps + restarts the core once you confirm. The previous core is set aside for rollback if the swap fails. When fetching from SagerNet/reF1nd, Maestro prefers the `amd64v3` build (matching the app's microarchitecture) and falls back to the baseline `amd64` build.
+
+Downloads are pinned to the **exact source repository** and follow redirects only within GitHub's own hosts. **Clear cache** (Settings → Core) removes `cache.db` and any leftover downloaded cores while keeping the one in use.
+
+---
+
+## How updates work
+
+Maestro has **two independent update mechanisms**:
+
+### 1. App self-update (portable edition)
+- Maestro learns its own build timestamp from a bundled manifest and checks the newest GitHub release.
+- Updates are decided by **build timestamp** (not version number) and the download is **SHA-256 verified** against the release's published hash.
+- On your confirmation, Maestro swaps its own executable and relaunches automatically. **Only the app binary is replaced** — your kernel, settings, and configs are untouched.
+- **Installed builds don't self-update** by swapping the exe (that would desync the installer's registration); they direct you to download the latest installer instead.
+
+### 2. Kernel (sing-box core) update
+- Runs against whichever **kernel source** you've selected (see above).
+- Download is **staged** while the core keeps running, then applied on a **confirmed restart**, with rollback if the swap fails.
+- **lurixo** downloads must match a published SHA-256. **SagerNet/reF1nd** publish no upstream checksum, so integrity rests on the repository-pinned HTTPS download plus an in-session re-verification of the staged bytes at apply time.
+
+---
+
+## Privacy
+
+Maestro is built to keep your data on your machine:
+
+- **Logs are kept in memory only and are never written to disk.** View them live on the **Logs** page; the in-app level filter only changes the view (the core still records full detail).
+- **You choose what leaves memory.** Export only the log lines you select to a file of your choosing — the API secret and common credential fields (`password`, `uuid`, `private_key`, `psk`, `secret`, `token`, `auth_str`, `api_secret`) are best-effort redacted first.
+- **One-shot crash dump only.** A single, overwrite-only `crash-dump.txt` is written **only** when Maestro or the core actually crashes (or an unclean prior shutdown is detected at startup). It is redacted with the same rules and carries a banner warning that it may still contain network destinations from your session — review before sharing.
+- **No telemetry or analytics.** Maestro's only outbound requests are update checks and core/app downloads (to GitHub), an optional outbound-IP lookup you trigger, and the local API of your own running core.
+
+---
+
+## Building from source
+
+Maestro targets **Windows**. The required Rust and Node toolchains are pinned in the repo (`rust-toolchain.toml` and `.nvmrc`); install the [Tauri prerequisites](https://tauri.app/start/prerequisites/) (including the WebView2 runtime and a C++ build environment), then:
 
 ```bash
-# Clone the repo
+# Clone
 git clone https://github.com/lurixo/Maestro.git
 cd Maestro
 
 # Install frontend dependencies
 npm install
 
-# Run in development mode
+# Run in development
 npm run tauri dev
 
 # Build a portable package (no installer)
 npx tauri build --no-bundle
 ```
 
-A production build is produced by CI as `maestro-<version>-windows-amd64v3-portable.zip`:
-a folder with `Maestro.exe` at the root and a `data/` subdirectory holding the
-bundled `sing-box.exe` core, `EnableLoopback.exe`, `singbox-build-info.json`, plus
-configs, settings and runtime files. Unzip it anywhere and run — no installation
-required. The app and core are both built for the x86-64-v3 microarchitecture
-(AVX2; CPUs from ~2013 on). (Requires the Microsoft Edge WebView2 runtime, present
-on Windows 11 and most Windows 10 systems.)
+> Builds target the **x86-64-v3** microarchitecture (configured in `src-tauri/.cargo/config.toml`) to match the bundled core, so the build host must be AVX2-capable. Release artifacts (portable zip + NSIS installer) are produced by CI on tagged versions.
 
-### Configs and the core
-
-- The core (`sing-box.exe`) ships bundled. Use **Settings → Core** to check for and
-  download a newer build from [sing-box-releases](https://github.com/lurixo/sing-box-releases/releases).
-- Configs are named profiles stored under `data/configs/<name>.json`. Create, edit, or
-  import them from the Dashboard; select the active one to run.
-- On start, Maestro reads the active config, injects `clash_api`/`cache_file`
-  settings, writes `config_runtime.json` (the original is never modified), and runs
-  `sing-box.exe run -c config_runtime.json -D <base_dir>`.
-
-## Project Structure
-
-```
-Maestro/
-├── src/                        # React frontend
-│   ├── components/
-│   │   ├── TitleBar.tsx        # Custom window title bar
-│   │   └── Sidebar.tsx         # NavigationView sidebar
-│   ├── pages/
-│   │   ├── Dashboard.tsx       # Status, traffic, proxy groups, configs
-│   │   ├── Connections.tsx     # Live active connections
-│   │   ├── Logs.tsx            # Core & app logs
-│   │   └── Settings.tsx        # Theme, autostart & core management
-│   ├── stores/
-│   │   └── appStore.ts         # Zustand state management
-│   ├── styles/
-│   │   └── globals.css         # Fluent Design tokens & components
-│   ├── types/
-│   │   └── index.ts            # TypeScript type definitions
-│   ├── App.tsx                 # Root component
-│   └── main.tsx                # Entry point
-├── src-tauri/                  # Rust backend
-│   ├── src/
-│   │   ├── main.rs             # Entry point
-│   │   ├── lib.rs              # Tauri setup & IPC commands
-│   │   ├── manager.rs          # sing-box process lifecycle
-│   │   ├── config.rs           # Config parsing & injection
-│   │   ├── core_update.rs      # Core bundling & in-app updates
-│   │   ├── proxy.rs            # Windows system proxy (registry + WinINet)
-│   │   ├── native_api.rs       # sing-box native gRPC client
-│   │   ├── groups.rs           # Proxy group state
-│   │   ├── settings.rs         # App settings & config profiles
-│   │   ├── accent.rs           # Windows accent color
-│   │   ├── elevation.rs        # UAC elevation relaunch
-│   │   ├── logbus.rs           # Log streaming bus
-│   │   ├── tray.rs             # System tray icon & menu
-│   │   └── error.rs            # Unified error types
-│   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   └── capabilities/
-│       └── default.json        # Tauri v2 permissions
-├── .github/workflows/
-│   ├── build.yml               # CI: build on push/PR
-│   └── release.yml             # CD: publish on tag
-├── package.json
-├── vite.config.ts
-└── tsconfig.json
-```
-
-## IPC Commands
-
-| Command | Signature | Description |
-|---------|-----------|-------------|
-| `start_core` | `() → ConfigInfo` | Start sing-box, returns proxy/API addresses |
-| `stop_core` | `() → ()` | Stop sing-box, clear system proxy |
-| `restart_core` | `() → ConfigInfo` | Stop then start |
-| `get_status` | `() → CoreStatus` | Current running state and uptime |
-| `toggle_system_proxy` | `() → bool` | Toggle Windows proxy, returns new state |
-| `get_proxy_groups` | `() → ProxyGroup[]` | List all Selector groups |
-| `switch_proxy` | `(group, node) → ()` | Switch selected node in a group |
-| `test_group_delay` | `(group) → {name: delay}` | Test latency for all nodes |
-| `open_base_dir` | `() → ()` | Open exe directory in Explorer |
-| `list_configs` / `get_config` | `() → ConfigEntry[]` / `(name) → string` | List/read config profiles |
-| `save_config` / `create_config` | `(name, content) → ()` / `(name) → ()` | Save or create a config profile |
-| `delete_config` / `rename_config` | `(name) → ()` / `(old, new) → ()` | Delete or rename a config profile |
-| `get_settings` / `set_silent_start` | `() → AppSettings` / `(enabled) → ()` | Read settings / toggle silent start |
-| `set_active_config` | `(name) → ()` | Select the active config profile |
-| `get_system_accent` | `() → string` | Windows accent color as hex |
-| `enable_uwp_loopback` | `() → string` | Launch the UWP loopback exemption tool |
-| `get_core_info` | `() → CoreInfo` | Installed core presence and build info |
-| `check_core_update` | `() → CoreUpdateCheck` | Compare installed core against latest |
-| `update_core` | `() → BuildInfo` | Download, verify, and install the latest core |
-
-## CI/CD
-
-### Build (on every push/PR to main)
-
-The `build.yml` workflow:
-- Builds on `windows-latest`
-- Installs Rust stable + Node.js 22.x
-- Downloads the latest `sing-box.exe` core per `singbox-build-info.json` (sha256-verified)
-- Runs `npx tauri build --no-bundle`
-- Assembles and uploads `maestro-windows-amd64v3-portable.zip` (7-day retention)
-
-### Release (on version tag)
-
-To create a release:
-
-```bash
-# Tag a version
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-The `release.yml` workflow will:
-- Build the application (x86-64-v3) and bundle the core
-- Create a GitHub Release titled "Maestro v1.0.0"
-- Upload two assets — the portable `maestro-<version>-windows-amd64v3-portable.zip`
-  and the NSIS installer `maestro-<version>-windows-amd64v3-setup.exe` (which
-  bundles the core + tools into the install's `data/`) — plus the
-  `maestro-build-info.json` self-update manifest
-- Auto-generate changelog from commits since the last tag
-
-## Tech Stack
-
-### Backend (Rust)
-- **tauri** 2.10 — Application framework
-- **tauri-build** 2.5 — Build script
-- **thiserror** 2.0 — Error derive macro
-- **anyhow** 1.0 — Application error handling
-- **urlencoding** 2.1 — URL percent-encoding
-- **tokio** ~1.47 LTS — Async runtime
-- **reqwest** 0.13 — HTTP client (Clash API, core downloads)
-- **serde/serde_json** 1.0 — Serialization
-- **zip** 8 — Core archive extraction
-- **sha2** 0.10 — Core download verification
-- **winreg** 0.56 — Windows Registry
-- **windows** 0.61 — Win32 API (WinINet)
-- **tracing** 0.1 — Structured logging
-
-### Frontend (TypeScript/React)
-- **React** 19.2 — UI framework
-- **Zustand** 5.0 — State management
-- **Tailwind CSS** 4.1 — Utility-first CSS (v4, CSS-first config)
-- **Vite** 8.0 — Build tool (Rolldown)
-- **TypeScript** 6.0 — Type checking
-- **@fluentui/react-icons** — Fluent Design icons
+---
 
 ## License
 
-GPL-3.0
+[GPL-3.0](LICENSE).
+
+## Acknowledgements
+
+- The [sing-box](https://sing-box.sagernet.org/) project and its authors — the proxy core Maestro drives.
+- The kernel-source maintainers: [lurixo](https://github.com/lurixo/sing-box-releases), [SagerNet](https://github.com/SagerNet/sing-box), and [reF1nd](https://github.com/reF1nd/sing-box-releases).
+- [Tauri](https://tauri.app/), [React](https://react.dev/), and the [Fluent UI](https://github.com/microsoft/fluentui-system-icons) icon set.
