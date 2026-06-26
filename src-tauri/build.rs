@@ -4,7 +4,7 @@ fn main() {
             std::env::set_var("PROTOC", protoc);
         }
     }
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_server(false)
         .compile_protos(&["proto/started_service.proto"], &["proto"])
         .expect("failed to compile protos");
