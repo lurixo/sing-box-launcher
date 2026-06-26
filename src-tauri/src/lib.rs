@@ -27,7 +27,7 @@ use crate::native_api::NativeClient;
 type DebugWriter = Option<Arc<Mutex<std::fs::File>>>;
 
 fn open_debug_log() -> DebugWriter {
-    let dir = manager::resolve_base_dir();
+    let dir = manager::data_dir();
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("launcher-debug.log");
     std::fs::OpenOptions::new()
@@ -306,10 +306,40 @@ async fn open_base_dir(mgr: tauri::State<'_, manager::Manager>) -> Result<(), Ap
 
 // ─── App Setup ──────────────────────────────────────────────────────────────
 
+/// Move files from the old flat layout (next to the exe) into `data/` so an
+/// in-place upgrade keeps the user's settings, configs and core.
+fn migrate_legacy_layout(exe_dir: &std::path::Path, data_dir: &std::path::Path) {
+    if exe_dir == data_dir {
+        return;
+    }
+    for name in [
+        "settings.json",
+        "cache.db",
+        "config_runtime.json",
+        "launcher-debug.log",
+        "sing-box.log",
+        "sing-box.exe",
+        "EnableLoopback.exe",
+        "singbox-build-info.json",
+        "config.json",
+        "configs",
+    ] {
+        let src = exe_dir.join(name);
+        let dst = data_dir.join(name);
+        if src.exists() && !dst.exists() {
+            let _ = std::fs::rename(&src, &dst);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let data_dir = manager::data_dir();
+    let _ = std::fs::create_dir_all(&data_dir);
+    migrate_legacy_layout(&manager::resolve_base_dir(), &data_dir);
+
     let dl = open_debug_log();
-    dlog(&dl, &format!("=== sing-box-launcher starting (pid {}) ===", std::process::id()));
+    dlog(&dl, &format!("=== Maestro starting (pid {}) ===", std::process::id()));
 
     let logbus = logbus::LogBus::new();
     {
@@ -324,7 +354,7 @@ pub fn run() {
 
     dlog(&dl, "tracing subscriber initialized");
 
-    let base_dir = manager::resolve_base_dir();
+    let base_dir = data_dir;
     config::ensure_configs_dir(&base_dir);
     dlog(&dl, &format!("base_dir = {}", base_dir.display()));
     info!(base_dir = %base_dir.display(), "starting sing-box launcher");

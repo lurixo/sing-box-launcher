@@ -27,7 +27,7 @@ fn tr(lang: &str, key: &str) -> &'static str {
 
 /// The current UI language, read from persisted settings (defaults to zh-CN).
 fn current_lang() -> String {
-    crate::settings::load_settings(&manager::resolve_base_dir()).lang
+    crate::settings::load_settings(&manager::data_dir()).lang
 }
 
 /// Build the tray menu in the given language.

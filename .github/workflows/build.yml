@@ -58,10 +58,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path portable | Out-Null
+          New-Item -ItemType Directory -Force -Path portable/data | Out-Null
           Copy-Item src-tauri/target/release/sing-box-launcher.exe portable/
-          Copy-Item stage/sing-box.exe portable/
-          Copy-Item stage/singbox-build-info.json portable/
-          Copy-Item src-tauri/resources/EnableLoopback.exe portable/
+          Copy-Item stage/sing-box.exe portable/data/
+          Copy-Item stage/singbox-build-info.json portable/data/
+          Copy-Item src-tauri/resources/EnableLoopback.exe portable/data/
           Compress-Archive -Path portable/* -DestinationPath sing-box-launcher-portable.zip -Force
 
       - name: Upload portable artifact

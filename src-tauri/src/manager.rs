@@ -207,11 +207,18 @@ impl ManagerInner {
     }
 }
 
-/// Resolve the base directory (directory containing the executable)
+/// Resolve the directory containing the executable.
 pub fn resolve_base_dir() -> PathBuf {
     std::env::current_exe()
         .map(|p| p.parent().unwrap_or(Path::new(".")).to_path_buf())
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// The application data directory: a `data/` folder next to the executable.
+/// Everything except the GUI binary (core, tools, configs, settings, cache,
+/// runtime config, logs) lives here to keep the install folder tidy.
+pub fn data_dir() -> PathBuf {
+    resolve_base_dir().join("data")
 }
 
 /// Build the sing-box run command without a console window on Windows.

@@ -69,7 +69,7 @@ pub async fn enable_uwp_loopback() -> Result<String, AppError> {
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let tool_path = crate::manager::resolve_base_dir().join("EnableLoopback.exe");
+    let tool_path = crate::manager::data_dir().join("EnableLoopback.exe");
     if !tool_path.exists() {
         return Err(AppError::Proxy(format!(
             "EnableLoopback.exe not found at {}",
