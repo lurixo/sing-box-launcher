@@ -36,6 +36,43 @@ pub struct OutboundIpInfo {
     pub asn: String,
 }
 
+/// Live core metrics from the SubscribeStatus stream.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CoreMetrics {
+    pub memory: u64,
+    pub goroutines: i32,
+    pub connections_in: i32,
+    pub connections_out: i32,
+    pub uplink: i64,
+    pub downlink: i64,
+    pub uplink_total: i64,
+    pub downlink_total: i64,
+}
+
+/// Clash routing mode: the available modes and the current one.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ClashModeInfo {
+    pub modes: Vec<String>,
+    pub current: String,
+}
+
+/// A single active connection, trimmed to the fields the GUI shows.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConnInfo {
+    pub id: String,
+    pub network: String,
+    pub protocol: String,
+    pub source: String,
+    pub destination: String,
+    pub domain: String,
+    pub outbound: String,
+    pub chain: Vec<String>,
+    pub rule: String,
+    pub upload: i64,
+    pub download: i64,
+    pub created_at: i64,
+}
+
 #[derive(Clone)]
 pub struct NativeClient {
     channel: Channel,
@@ -124,6 +161,82 @@ impl NativeClient {
             .await
             .map_err(status)?;
         info!(group, proxy, "proxy switched");
+        Ok(())
+    }
+
+    /// Open the live status stream (memory, traffic totals, connection counts).
+    pub async fn status_stream(
+        &self,
+        interval_ms: i64,
+    ) -> Result<tonic::Streaming<pb::Status>, AppError> {
+        let resp = self
+            .client()
+            .subscribe_status(self.req(pb::SubscribeStatusRequest { interval: interval_ms }))
+            .await
+            .map_err(status)?;
+        Ok(resp.into_inner())
+    }
+
+    /// Read the current clash mode and the list of available modes. An empty
+    /// mode list means the running config does not use clash mode.
+    pub async fn get_clash_mode(&self) -> Result<ClashModeInfo, AppError> {
+        let resp = self
+            .client()
+            .get_clash_mode_status(self.req(pb::Empty {}))
+            .await
+            .map_err(status)?;
+        let m = resp.into_inner();
+        Ok(ClashModeInfo { modes: m.mode_list, current: m.current_mode })
+    }
+
+    pub async fn set_clash_mode(&self, mode: &str) -> Result<(), AppError> {
+        self.client()
+            .set_clash_mode(self.req(pb::ClashMode { mode: mode.to_string() }))
+            .await
+            .map_err(status)?;
+        info!(mode, "clash mode set");
+        Ok(())
+    }
+
+    /// Snapshot the active connections from the first (reset) batch of the
+    /// SubscribeConnections stream, then drop the stream.
+    pub async fn get_connections(&self) -> Result<Vec<ConnInfo>, AppError> {
+        let resp = self
+            .client()
+            .subscribe_connections(self.req(pb::SubscribeConnectionsRequest { interval: 1000 }))
+            .await
+            .map_err(status)?;
+        let mut stream = resp.into_inner();
+        let batch = stream
+            .message()
+            .await
+            .map_err(status)?
+            .ok_or_else(|| AppError::ClashApi("connections stream closed".into()))?;
+        let mut out = Vec::new();
+        for ev in batch.events {
+            // 0 == CONNECTION_EVENT_NEW; the reset batch lists every live conn.
+            if ev.r#type == 0 {
+                if let Some(c) = ev.connection {
+                    out.push(map_conn(c));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    pub async fn close_connection(&self, id: &str) -> Result<(), AppError> {
+        self.client()
+            .close_connection(self.req(pb::CloseConnectionRequest { id: id.to_string() }))
+            .await
+            .map_err(status)?;
+        Ok(())
+    }
+
+    pub async fn close_all_connections(&self) -> Result<(), AppError> {
+        self.client()
+            .close_all_connections(self.req(pb::Empty {}))
+            .await
+            .map_err(status)?;
         Ok(())
     }
 
@@ -227,6 +340,37 @@ fn parse_trace(raw: &str, ipv6: bool) -> Option<OutboundIpInfo> {
         .unwrap_or("")
         .to_string();
     Some(OutboundIpInfo { ip, country, asn })
+}
+
+/// Map a wire `Status` into the serializable metrics sent to the frontend.
+pub fn map_status(s: pb::Status) -> CoreMetrics {
+    CoreMetrics {
+        memory: s.memory,
+        goroutines: s.goroutines,
+        connections_in: s.connections_in,
+        connections_out: s.connections_out,
+        uplink: s.uplink,
+        downlink: s.downlink,
+        uplink_total: s.uplink_total,
+        downlink_total: s.downlink_total,
+    }
+}
+
+fn map_conn(c: pb::Connection) -> ConnInfo {
+    ConnInfo {
+        id: c.id,
+        network: c.network,
+        protocol: c.protocol,
+        source: c.source,
+        destination: c.destination,
+        domain: c.domain,
+        outbound: c.outbound,
+        chain: c.chain_list,
+        rule: c.rule,
+        upload: c.uplink_total,
+        download: c.downlink_total,
+        created_at: c.created_at,
+    }
 }
 
 fn status(s: tonic::Status) -> AppError {

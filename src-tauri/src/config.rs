@@ -161,45 +161,61 @@ pub async fn save_config(
     Ok(())
 }
 
-/// Validate a config with `sing-box check`, then rewrite it with `format -w`.
-/// Returns the (possibly reformatted) content so the editor can refresh.
+/// Validate + format the editor's current content WITHOUT touching the saved
+/// config: the text is written to a scratch file, checked and `format -w`'d
+/// there, then the formatted text is returned. Whether to persist is the
+/// user's call (they still have to press Save).
 #[tauri::command]
 pub async fn check_and_format_config(
     mgr: tauri::State<'_, crate::manager::Manager>,
-    name: String,
+    content: String,
 ) -> Result<CheckResult, AppError> {
-    let (sb_path, cfg_path) = {
+    let (sb_path, tmp_path) = {
         let mgr = mgr.lock().await;
-        (mgr.base_dir.join("sing-box.exe"), config_path(&mgr.base_dir, &name)?)
+        (
+            mgr.base_dir.join("sing-box.exe"),
+            mgr.base_dir.join("config_format_tmp.json"),
+        )
     };
     if !sb_path.exists() {
         return Err(AppError::Config("sing-box.exe not found".into()));
     }
-    if !cfg_path.exists() {
-        return Err(AppError::Config(format!("config '{name}' not found")));
-    }
 
-    let check = run_singbox(&sb_path, &["check", "-c"], &cfg_path).await?;
+    std::fs::write(&tmp_path, &content)
+        .map_err(|e| AppError::Config(format!("write temp config: {e}")))?;
+    let result = format_via_temp(&sb_path, &tmp_path, &content).await;
+    let _ = std::fs::remove_file(&tmp_path);
+    result
+}
+
+/// Run check + `format -w` against the scratch file, returning the original
+/// content untouched on failure and the reformatted text on success.
+async fn format_via_temp(
+    sb_path: &Path,
+    tmp_path: &Path,
+    original: &str,
+) -> Result<CheckResult, AppError> {
+    let check = run_singbox(sb_path, &["check", "-c"], tmp_path).await?;
     if !check.status.success() {
         return Ok(CheckResult {
             ok: false,
             message: combine_output(&check),
-            content: std::fs::read_to_string(&cfg_path).unwrap_or_default(),
+            content: original.to_string(),
         });
     }
 
-    let fmt = run_singbox(&sb_path, &["format", "-w", "-c"], &cfg_path).await?;
+    let fmt = run_singbox(sb_path, &["format", "-w", "-c"], tmp_path).await?;
     if !fmt.status.success() {
         return Ok(CheckResult {
             ok: false,
             message: combine_output(&fmt),
-            content: std::fs::read_to_string(&cfg_path).unwrap_or_default(),
+            content: original.to_string(),
         });
     }
 
-    let content = std::fs::read_to_string(&cfg_path)
-        .map_err(|e| AppError::Config(format!("read {name}.json: {e}")))?;
-    Ok(CheckResult { ok: true, message: String::new(), content })
+    let formatted = std::fs::read_to_string(tmp_path)
+        .map_err(|e| AppError::Config(format!("read formatted config: {e}")))?;
+    Ok(CheckResult { ok: true, message: String::new(), content: formatted })
 }
 
 /// Create a new, empty config file

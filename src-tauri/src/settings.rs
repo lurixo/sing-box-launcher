@@ -17,8 +17,15 @@ fn default_log_level() -> String {
     "info".into()
 }
 
+fn default_lang() -> String {
+    "zh-CN".into()
+}
+
 /// Allowed sing-box log levels, lowest to highest verbosity.
 pub const LOG_LEVELS: [&str; 5] = ["trace", "debug", "info", "warn", "error"];
+
+/// Allowed UI languages (kept in sync with the frontend dictionaries).
+pub const LANGS: [&str; 2] = ["en", "zh-CN"];
 
 /// Persistent application settings stored in settings.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +40,8 @@ pub struct AppSettings {
     pub log_level: String,
     #[serde(default)]
     pub log_persist: bool,
+    #[serde(default = "default_lang")]
+    pub lang: String,
 }
 
 impl Default for AppSettings {
@@ -43,6 +52,7 @@ impl Default for AppSettings {
             run_as_admin: true,
             log_level: default_log_level(),
             log_persist: false,
+            lang: default_lang(),
         }
     }
 }
@@ -129,6 +139,26 @@ pub async fn set_log_persist(
     let mut settings = load_settings(&mgr.base_dir);
     settings.log_persist = enabled;
     save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_lang(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    app: tauri::AppHandle,
+    lang: String,
+) -> Result<(), AppError> {
+    if !LANGS.contains(&lang.as_str()) {
+        return Err(AppError::Config(format!("invalid lang: {lang}")));
+    }
+    {
+        let mgr = mgr.lock().await;
+        let mut settings = load_settings(&mgr.base_dir);
+        settings.lang = lang.clone();
+        save_settings(&mgr.base_dir, &settings)?;
+    }
+    // Re-label the tray menu live so it follows the in-app language.
+    crate::tray::rebuild_tray_menu(&app, &lang);
+    Ok(())
 }
 
 #[tauri::command]

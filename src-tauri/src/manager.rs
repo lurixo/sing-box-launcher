@@ -30,6 +30,9 @@ pub struct ManagerInner {
     pub api_address: String,
     pub api_secret: String,
     pub proxy_enabled: bool,
+    /// Bumped on every successful start so per-session background tasks (e.g.
+    /// the metrics stream) can detect a restart and exit.
+    pub generation: u64,
     started_at: Option<std::time::Instant>,
     logbus: LogBus,
 }
@@ -45,6 +48,7 @@ pub fn new_manager(base_dir: PathBuf, logbus: LogBus) -> Manager {
         api_address: String::new(),
         api_secret: String::new(),
         proxy_enabled: false,
+        generation: 0,
         started_at: None,
         logbus,
     }))
@@ -129,6 +133,7 @@ impl ManagerInner {
 
         self.child = Some(child);
         self.running = true;
+        self.generation = self.generation.wrapping_add(1);
         self.proxy_server = info.proxy_server.clone();
         self.api_address = info.api_address.clone();
         self.api_secret = info.api_secret.clone();

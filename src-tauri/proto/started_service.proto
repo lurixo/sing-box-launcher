@@ -43,6 +43,101 @@ service StartedService {
   rpc SubscribeGroups(Empty) returns (stream Groups) {}
   rpc URLTest(URLTestRequest) returns (Empty) {}
   rpc SelectOutbound(SelectOutboundRequest) returns (Empty) {}
+
+  // Live status feed: memory, connection counts and cumulative traffic.
+  rpc SubscribeStatus(SubscribeStatusRequest) returns (stream Status) {}
+
+  // Clash routing mode (rule / global / direct).
+  rpc GetClashModeStatus(Empty) returns (ClashModeStatus) {}
+  rpc SetClashMode(ClashMode) returns (Empty) {}
+  rpc SubscribeClashMode(Empty) returns (stream ClashMode) {}
+
+  // Active connections.
+  rpc SubscribeConnections(SubscribeConnectionsRequest) returns (stream ConnectionEvents) {}
+  rpc CloseConnection(CloseConnectionRequest) returns (Empty) {}
+  rpc CloseAllConnections(Empty) returns (Empty) {}
+}
+
+// ─── Status (SubscribeStatus) ───────────────────────────────────────────────
+message SubscribeStatusRequest {
+  int64 interval = 1; // push period in milliseconds
+}
+
+message Status {
+  uint64 memory = 1;
+  int32 goroutines = 2;
+  int32 connectionsIn = 3;
+  int32 connectionsOut = 4;
+  bool trafficAvailable = 5;
+  int64 uplink = 6;          // current upload rate (bytes/s)
+  int64 downlink = 7;        // current download rate (bytes/s)
+  int64 uplinkTotal = 8;     // cumulative upload bytes
+  int64 downlinkTotal = 9;   // cumulative download bytes
+}
+
+// ─── Clash mode ─────────────────────────────────────────────────────────────
+message ClashMode {
+  string mode = 3; // upstream field number is 3
+}
+
+message ClashModeStatus {
+  repeated string modeList = 1; // available modes; empty => clash mode disabled
+  string currentMode = 2;
+}
+
+// ─── Connections ────────────────────────────────────────────────────────────
+message SubscribeConnectionsRequest {
+  int64 interval = 1; // push period in milliseconds
+}
+
+enum ConnectionEventType {
+  CONNECTION_EVENT_NEW = 0;
+  CONNECTION_EVENT_UPDATE = 1;
+  CONNECTION_EVENT_CLOSED = 2;
+}
+
+message ConnectionEvent {
+  ConnectionEventType type = 1;
+  string id = 2;
+  Connection connection = 3; // full object on NEW/CLOSED, absent on UPDATE
+  int64 uplinkDelta = 4;
+  int64 downlinkDelta = 5;
+  int64 closedAt = 6;
+}
+
+message ConnectionEvents {
+  repeated ConnectionEvent events = 1;
+  bool reset = 2; // true => drop the current set and rebuild from these events
+}
+
+// A subset of the upstream Connection message — only the fields the GUI shows.
+// Omitted fields (e.g. processInfo = 22) are skipped on the wire by proto3.
+message Connection {
+  string id = 1;
+  string inbound = 2;
+  string inboundType = 3;
+  int32 ipVersion = 4;
+  string network = 5;
+  string source = 6;
+  string destination = 7;
+  string domain = 8;
+  string protocol = 9;
+  string user = 10;
+  string fromOutbound = 11;
+  int64 createdAt = 12;
+  int64 closedAt = 13;
+  int64 uplink = 14;
+  int64 downlink = 15;
+  int64 uplinkTotal = 16;
+  int64 downlinkTotal = 17;
+  string rule = 18;
+  string outbound = 19;
+  string outboundType = 20;
+  repeated string chainList = 21;
+}
+
+message CloseConnectionRequest {
+  string id = 1;
 }
 
 message OutboundTraceRequest {

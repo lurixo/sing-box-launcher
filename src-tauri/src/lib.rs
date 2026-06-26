@@ -59,8 +59,10 @@ async fn start_core(
     grp: tauri::State<'_, groups::Groups>,
     app: tauri::AppHandle,
 ) -> Result<config::ConfigInfo, AppError> {
+    let mgr_arc = mgr.inner().clone();
     let mut mgr = mgr.lock().await;
     let info = mgr.start().await?;
+    let generation = mgr.generation;
 
     tray::update_tray_icon(&app, true, false);
     let _ = app.emit("core-status-changed", mgr.status());
@@ -68,6 +70,9 @@ async fn start_core(
     // Load proxy groups in the background
     match NativeClient::new(&info.api_address, &info.api_secret) {
         Ok(client) => {
+            // Stream live metrics (traffic/memory/connections) to the frontend.
+            spawn_metrics_stream(client.clone(), mgr_arc, generation, app.clone());
+
             let grp = grp.inner().clone();
             let app2 = app.clone();
             tauri::async_runtime::spawn(async move {
@@ -129,6 +134,39 @@ async fn restart_core(
     }
 
     start_core(mgr, grp, app).await
+}
+
+/// Stream live core metrics to the frontend, reconnecting while this core
+/// session runs. Tolerates a slow API boot and transient stream drops (like
+/// the group-load retry); exits deterministically on stop or restart by
+/// watching `running` and the start `generation`.
+fn spawn_metrics_stream(
+    client: NativeClient,
+    mgr: manager::Manager,
+    generation: u64,
+    app: tauri::AppHandle,
+) {
+    tauri::async_runtime::spawn(async move {
+        let alive = |m: &manager::ManagerInner| m.running && m.generation == generation;
+        loop {
+            if !alive(&*mgr.lock().await) {
+                break;
+            }
+            match client.status_stream(1000).await {
+                Ok(mut stream) => {
+                    while let Ok(Some(st)) = stream.message().await {
+                        let _ = app.emit("metrics-tick", native_api::map_status(st));
+                    }
+                }
+                Err(e) => tracing::debug!(error = %e, "status stream open failed; retrying"),
+            }
+            if !alive(&*mgr.lock().await) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        tracing::debug!("metrics stream stopped");
+    });
 }
 
 #[tauri::command]
@@ -210,6 +248,51 @@ async fn get_outbound_ip(
     client.get_outbound_ip().await
 }
 
+async fn api_client(
+    grp: &tauri::State<'_, groups::Groups>,
+) -> Result<NativeClient, AppError> {
+    grp.lock()
+        .await
+        .client
+        .clone()
+        .ok_or_else(|| AppError::ClashApi("not connected".into()))
+}
+
+#[tauri::command]
+async fn get_clash_mode(
+    grp: tauri::State<'_, groups::Groups>,
+) -> Result<native_api::ClashModeInfo, AppError> {
+    api_client(&grp).await?.get_clash_mode().await
+}
+
+#[tauri::command]
+async fn set_clash_mode(
+    grp: tauri::State<'_, groups::Groups>,
+    mode: String,
+) -> Result<(), AppError> {
+    api_client(&grp).await?.set_clash_mode(&mode).await
+}
+
+#[tauri::command]
+async fn get_connections(
+    grp: tauri::State<'_, groups::Groups>,
+) -> Result<Vec<native_api::ConnInfo>, AppError> {
+    api_client(&grp).await?.get_connections().await
+}
+
+#[tauri::command]
+async fn close_connection(
+    grp: tauri::State<'_, groups::Groups>,
+    id: String,
+) -> Result<(), AppError> {
+    api_client(&grp).await?.close_connection(&id).await
+}
+
+#[tauri::command]
+async fn close_all_connections(grp: tauri::State<'_, groups::Groups>) -> Result<(), AppError> {
+    api_client(&grp).await?.close_all_connections().await
+}
+
 #[tauri::command]
 async fn open_base_dir(mgr: tauri::State<'_, manager::Manager>) -> Result<(), AppError> {
     let mgr = mgr.lock().await;
@@ -282,6 +365,11 @@ pub fn run() {
             switch_proxy,
             test_group_delay,
             get_outbound_ip,
+            get_clash_mode,
+            set_clash_mode,
+            get_connections,
+            close_connection,
+            close_all_connections,
             open_base_dir,
             accent::get_system_accent,
             config::list_configs,
@@ -297,6 +385,7 @@ pub fn run() {
             settings::set_run_as_admin,
             settings::set_log_level,
             settings::set_log_persist,
+            settings::set_lang,
             logbus::get_logs,
             logbus::clear_logs,
             proxy::enable_uwp_loopback,
