@@ -391,11 +391,16 @@ fn combine_output(out: &std::process::Output) -> String {
     s.trim().to_string()
 }
 
-/// Override `log.level` in the config so the GUI setting drives core verbosity.
+/// Force the runtime config's log output so the GUI always receives the full
+/// stream: set `level` (we pass "trace"), keep logging enabled, and route it to
+/// stdout (we capture stdout; on-disk persistence is the launcher's job). Only
+/// `config_runtime.json` is touched — the user's saved config is never modified.
 fn inject_log_level(config: &mut Value, level: &str) {
     if let Some(obj) = config.as_object_mut() {
         let log = ensure_object(obj, "log");
         log.insert("level".into(), Value::String(level.to_string()));
+        log.insert("disabled".into(), Value::Bool(false));
+        log.remove("output");
     }
 }
 

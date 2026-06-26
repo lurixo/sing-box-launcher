@@ -4,7 +4,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
-import { useAppStore } from "../stores/appStore";
 import type { AppSettings, LogLine } from "../types";
 
 const LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
@@ -41,21 +40,14 @@ export function Logs() {
   const t = useT();
   const revealRef = useReveal<HTMLDivElement>();
 
-  const running = useAppStore((s) => s.status.running);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [source, setSource] = useState<"core" | "app">("core");
   const [minLevel, setMinLevel] = useState<Level>("info");
   const [autoScroll, setAutoScroll] = useState(true);
-  const [toast, setToast] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast((m) => (m === msg ? null : m)), 2500);
-  };
-
-  // Seed the level from the persisted kernel log level — this switch is the
-  // single source of truth for verbosity (it also filters the view below).
+  // Seed the display filter from the persisted preference. The core always logs
+  // at full (trace) detail; this switch only filters what the view renders.
   useEffect(() => {
     invoke<AppSettings>("get_settings")
       .then((s) => {
@@ -66,23 +58,13 @@ export function Logs() {
       .catch(() => {});
   }, []);
 
-  // Change the kernel verbosity + the display filter together. sing-box reads
-  // log.level only at startup (no live/reload API), so when the core is running
-  // we reload it so the new level actually takes effect — with a toast so the
-  // brief reconnect isn't mysterious. This is a *kernel* reload, distinct from
-  // the visible GUI restart on the dashboard.
-  const changeLevel = async (level: Level) => {
+  // Pure GUI filter: the core always records at trace, so changing the level
+  // only changes what the view renders — instant, and it never touches the core,
+  // system proxy, or connections. We persist the choice as the default filter.
+  const changeLevel = (level: Level) => {
     if (level === minLevel) return;
     setMinLevel(level);
-    try {
-      await invoke("set_log_level", { level });
-      if (running) {
-        await invoke("restart_core");
-        showToast(t("logs.levelRestarted", { level: level.toUpperCase() }));
-      }
-    } catch {
-      /* noop */
-    }
+    invoke("set_log_level", { level }).catch(() => {});
   };
 
   useEffect(() => {
@@ -124,8 +106,10 @@ export function Logs() {
     };
   }, []);
 
+  // Cap rendered rows so a trace-level view (the core always logs at trace)
+  // can't explode the DOM. Auto-scroll keeps the tail visible.
   const visible = useMemo(
-    () => lines.filter((l) => l.source === source && rank(l.level) >= rank(minLevel)).slice(-2000),
+    () => lines.filter((l) => l.source === source && rank(l.level) >= rank(minLevel)).slice(-1000),
     [lines, source, minLevel],
   );
 
@@ -206,12 +190,6 @@ export function Logs() {
           {t("logs.clear")}
         </button>
       </div>
-
-      {toast && (
-        <div className="infobar" style={{ background: "var(--status-success-bg)", borderColor: "var(--status-success)" }}>
-          {toast}
-        </div>
-      )}
 
       {/* Log view */}
       <div

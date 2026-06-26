@@ -95,10 +95,9 @@ export const en = {
   "logs.core": "Core",
   "logs.app": "App",
   "logs.minLevel": "Log level",
-  "logs.levelApplyHint": "Sets core verbosity (applies on next core start) and filters the view.",
+  "logs.levelApplyHint": "Filters the log view. The core always records full (trace) detail.",
   "logs.clear": "Clear",
   "logs.autoScroll": "Auto-scroll",
-  "logs.levelRestarted": "Reloaded core at {level} level",
   "logs.empty": "No logs yet.",
   "logs.count": "{count} lines",
 
@@ -256,10 +255,9 @@ export const zhCN: Record<TranslationKey, string> = {
   "logs.core": "内核",
   "logs.app": "应用",
   "logs.minLevel": "日志级别",
-  "logs.levelApplyHint": "设置内核日志详细程度（下次启动内核生效），并过滤显示。",
+  "logs.levelApplyHint": "过滤日志显示。内核始终记录完整（trace）日志。",
   "logs.clear": "清空",
   "logs.autoScroll": "自动滚动",
-  "logs.levelRestarted": "已按 {level} 级别重启内核",
   "logs.empty": "暂无日志。",
   "logs.count": "{count} 行",
 

@@ -117,6 +117,18 @@ fn normalize_level(level: &str) -> &'static str {
     }
 }
 
+/// Numeric severity rank: trace=0 (lowest) … error=4 (highest). Used for both
+/// the GUI display filter and the on-disk persistence threshold.
+pub fn level_rank(level: &str) -> u8 {
+    match normalize_level(level) {
+        "trace" => 0,
+        "debug" => 1,
+        "warn" => 3,
+        "error" => 4,
+        _ => 2, // info
+    }
+}
+
 /// Extract a log level from a sing-box stdout line by finding the first
 /// standalone level token, defaulting to `info`.
 pub fn parse_core_level(line: &str) -> &'static str {
