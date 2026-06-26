@@ -16,6 +16,9 @@ export function App() {
   const setStatus = useAppStore((s) => s.setStatus);
   const setGroups = useAppStore((s) => s.setGroups);
   const setPage = useAppStore((s) => s.setPage);
+  const startCore = useAppStore((s) => s.startCore);
+  const stopCore = useAppStore((s) => s.stopCore);
+  const restartCore = useAppStore((s) => s.restartCore);
 
   // Initialize: fetch status and set up event listeners
   useEffect(() => {
@@ -34,6 +37,13 @@ export function App() {
       setPage(e.payload as Page);
     });
 
+    // Tray core controls run through the same commands as the GUI buttons.
+    const unlistenAction = listen<string>("tray-action", (e) => {
+      if (e.payload === "start") startCore();
+      else if (e.payload === "stop") stopCore();
+      else if (e.payload === "restart") restartCore();
+    });
+
     // Poll status every 5 seconds for uptime updates
     const interval = setInterval(fetchStatus, 5000);
 
@@ -41,6 +51,7 @@ export function App() {
       unlistenStatus.then((f) => f());
       unlistenGroups.then((f) => f());
       unlistenNav.then((f) => f());
+      unlistenAction.then((f) => f());
       clearInterval(interval);
     };
   }, []);

@@ -3,24 +3,24 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager,
 };
-use tracing::error;
 
 use crate::manager;
 
-const TOOLTIP: &str = "sing-box launcher";
+const TOOLTIP: &str = "Maestro";
 
 /// Minimal tray-menu localization — the app's only Rust-side i18n.
 fn tr(lang: &str, key: &str) -> &'static str {
     let zh = lang == "zh-CN";
     match key {
         "show" => if zh { "显示窗口" } else { "Show Window" },
-        "start" => if zh { "启动" } else { "Start" },
-        "stop" => if zh { "停止" } else { "Stop" },
+        "stop" => if zh { "停止内核" } else { "Stop Core" },
+        "start" => if zh { "启动内核" } else { "Start Core" },
         "connections" => if zh { "活动连接" } else { "Active Connections" },
+        "restart" => if zh { "重启" } else { "Restart" },
         "quit" => if zh { "退出" } else { "Quit" },
-        "tip.stopped" => if zh { "sing-box launcher — 已停止" } else { "sing-box launcher — stopped" },
-        "tip.proxy" => if zh { "sing-box launcher — 代理已启用" } else { "sing-box launcher — proxy enabled" },
-        "tip.running" => if zh { "sing-box launcher — 运行中" } else { "sing-box launcher — running" },
+        "tip.stopped" => if zh { "Maestro — 已停止" } else { "Maestro — stopped" },
+        "tip.proxy" => if zh { "Maestro — 代理已启用" } else { "Maestro — proxy enabled" },
+        "tip.running" => if zh { "Maestro — 运行中" } else { "Maestro — running" },
         _ => "",
     }
 }
@@ -30,31 +30,38 @@ fn current_lang() -> String {
     crate::settings::load_settings(&manager::data_dir()).lang
 }
 
-/// Build the tray menu in the given language.
+/// Build the tray menu in the given language. Order top→bottom:
+/// show / stop / start / connections / restart / quit.
 fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
     let show = MenuItemBuilder::with_id("show", tr(lang, "show")).build(app)?;
-    let start = MenuItemBuilder::with_id("start", tr(lang, "start")).build(app)?;
     let stop = MenuItemBuilder::with_id("stop", tr(lang, "stop")).build(app)?;
+    let start = MenuItemBuilder::with_id("start", tr(lang, "start")).build(app)?;
     let connections = MenuItemBuilder::with_id("connections", tr(lang, "connections")).build(app)?;
+    let restart = MenuItemBuilder::with_id("restart", tr(lang, "restart")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", tr(lang, "quit")).build(app)?;
 
     MenuBuilder::new(app)
         .item(&show)
         .separator()
-        .item(&start)
         .item(&stop)
-        .separator()
+        .item(&start)
         .item(&connections)
+        .item(&restart)
         .separator()
         .item(&quit)
         .build()
 }
 
-/// Show and focus the main window.
+/// Show, un-minimize and bring the main window to the foreground. The
+/// un-minimize + brief topmost toggle is required on Windows: `show()` alone
+/// does not restore a window the user minimized to the taskbar.
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
+        let _ = w.set_always_on_top(true);
+        let _ = w.set_always_on_top(false);
     }
 }
 
@@ -71,43 +78,16 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             let app = app.clone();
             match event.id().as_ref() {
                 "show" => show_main(&app),
+                // Route core control through the frontend so the full start flow
+                // (metrics + group streams) runs, not just a bare process spawn.
+                "start" => { let _ = app.emit("tray-action", "start"); }
+                "stop" => { let _ = app.emit("tray-action", "stop"); }
+                "restart" => { let _ = app.emit("tray-action", "restart"); }
                 "connections" => {
                     show_main(&app);
                     let _ = app.emit("navigate", "connections");
                 }
-                "start" => {
-                    let app = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let mgr = app.state::<crate::manager::Manager>();
-                        let mut mgr = mgr.lock().await;
-                        if let Err(e) = mgr.start().await {
-                            error!(error = %e, "tray start failed");
-                        } else {
-                            update_tray_icon(&app, true, false);
-                            let _ = app.emit("core-status-changed", mgr.status());
-                        }
-                    });
-                }
-                "stop" => {
-                    let app = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let mgr = app.state::<crate::manager::Manager>();
-                        let mut mgr = mgr.lock().await;
-                        if mgr.proxy_enabled {
-                            mgr.proxy_enabled = false;
-                            let _ = crate::proxy::set_system_proxy(false, "", "");
-                        }
-                        if let Err(e) = mgr.stop().await {
-                            error!(error = %e, "tray stop failed");
-                        }
-                        let groups = app.state::<crate::groups::Groups>();
-                        groups.lock().await.clear();
-                        update_tray_icon(&app, false, false);
-                        let _ = app.emit("core-status-changed", mgr.status());
-                    });
-                }
                 "quit" => {
-                    let app = app.clone();
                     tauri::async_runtime::spawn(async move {
                         let mgr = app.state::<crate::manager::Manager>();
                         let mut mgr = mgr.lock().await;
