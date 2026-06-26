@@ -68,7 +68,8 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let menu = build_menu(app, &lang)?;
 
     TrayIconBuilder::with_id("main-tray")
-        .icon(tauri::include_image!("icons/32x32.png"))
+        // Initial state is "stopped" — the core does not auto-start by default.
+        .icon(tauri::include_image!("icons/tray-stopped.png"))
         .tooltip(TOOLTIP)
         .menu(&menu)
         // Left-click raises the window (see on_tray_icon_event); the context
@@ -114,18 +115,20 @@ pub fn rebuild_tray_menu(app: &AppHandle, lang: &str) {
     }
 }
 
-/// Update the tray tooltip to reflect the current state. The branded icon is
-/// fixed; only the tooltip text (and its language) changes.
+/// Update the tray icon AND tooltip to reflect the current state, so the core's
+/// run state is obvious at a glance (not just on hover). Colour mapping:
+/// stopped → dim gray, running → green, running + system proxy → brand blue.
 pub fn update_tray_icon(app: &AppHandle, running: bool, proxy_enabled: bool) {
     if let Some(tray) = app.tray_by_id("main-tray") {
         let lang = current_lang();
-        let key = if !running {
-            "tip.stopped"
+        let (icon, key) = if !running {
+            (tauri::include_image!("icons/tray-stopped.png"), "tip.stopped")
         } else if proxy_enabled {
-            "tip.proxy"
+            (tauri::include_image!("icons/tray-proxy.png"), "tip.proxy")
         } else {
-            "tip.running"
+            (tauri::include_image!("icons/tray-running.png"), "tip.running")
         };
+        let _ = tray.set_icon(Some(icon));
         let _ = tray.set_tooltip(Some(tr(&lang, key)));
     }
 }
