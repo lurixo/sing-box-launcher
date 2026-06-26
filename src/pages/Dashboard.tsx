@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, type CSSProperties } from "react";
+import { useEffect, useState, useCallback, useRef, type CSSProperties } from "react";
 import {
   PlayRegular,
   StopRegular,
@@ -20,12 +20,18 @@ import {
   EditRegular,
   ArrowLeftRegular,
   DocumentCheckmarkRegular,
+  ArrowUpRegular,
+  ArrowDownRegular,
+  ArrowUploadRegular,
+  ArrowDownloadRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useReveal } from "../hooks/useReveal";
-import { useT } from "../i18n/strings";
-import type { ConfigEntry, CheckResult, OutboundIpInfo } from "../types";
+import { useT, type TranslationKey } from "../i18n/strings";
+import { formatBytes, formatSpeed } from "../lib/format";
+import type { ConfigEntry, CheckResult, OutboundIpInfo, CoreMetrics, ClashModeInfo } from "../types";
 
 const ipTokenStyle: CSSProperties = {
   fontFamily: "monospace", fontSize: 13, fontWeight: 500,
@@ -138,6 +144,186 @@ function formatUptime(secs: number): string {
   if (h > 0) return `${h}h ${m}m ${s}s`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+}
+
+// ─── Live traffic chart (hand-rolled SVG, no chart dependency) ───────────────
+function TrafficChart({ samples }: { samples: { up: number; down: number }[] }) {
+  const W = 300;
+  const H = 72;
+  const data = samples.length ? samples : [{ up: 0, down: 0 }];
+  const n = data.length;
+  const max = Math.max(1, ...data.map((s) => Math.max(s.up, s.down)));
+  const xAt = (i: number) => (n <= 1 ? W : (i / (n - 1)) * W);
+  const yAt = (v: number) => H - 2 - (v / max) * (H - 8);
+  const points = (key: "up" | "down") =>
+    data.map((s, i) => `${xAt(i).toFixed(1)},${yAt(s[key]).toFixed(1)}`).join(" ");
+  const area = (key: "up" | "down") => {
+    const pts = points(key).split(" ").join(" L");
+    return `M${xAt(0).toFixed(1)},${H} L${pts} L${W},${H} Z`;
+  };
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      style={{ width: "100%", height: 72, display: "block" }}
+    >
+      <path d={area("down")} fill="var(--accent-default)" opacity={0.12} />
+      <path d={area("up")} fill="var(--status-success)" opacity={0.12} />
+      <polyline points={points("down")} fill="none" stroke="var(--accent-default)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+      <polyline points={points("up")} fill="none" stroke="var(--status-success)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+const MODE_KEYS: Record<string, TranslationKey> = {
+  rule: "dashboard.modeRule",
+  global: "dashboard.modeGlobal",
+  direct: "dashboard.modeDirect",
+};
+
+function ClashModeSelector() {
+  const running = useAppStore((s) => s.status.running);
+  const t = useT();
+  const [info, setInfo] = useState<ClashModeInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!running) { setInfo(null); return; }
+    try {
+      setInfo(await invoke<ClashModeInfo>("get_clash_mode"));
+    } catch {
+      setInfo(null);
+    }
+  }, [running]);
+
+  useEffect(() => {
+    if (!running) { setInfo(null); return; }
+    const timer = setTimeout(refresh, 800);
+    return () => clearTimeout(timer);
+  }, [running, refresh]);
+
+  const setMode = async (mode: string) => {
+    if (busy || !info || mode === info.current) return;
+    setBusy(true);
+    setInfo({ ...info, current: mode });
+    try {
+      await invoke("set_clash_mode", { mode });
+    } catch {
+      refresh();
+    }
+    setBusy(false);
+  };
+
+  if (!running || !info || info.modes.length === 0) return null;
+
+  const label = (m: string) => {
+    const key = MODE_KEYS[m.toLowerCase()];
+    return key ? t(key) : m.charAt(0).toUpperCase() + m.slice(1);
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("dashboard.mode")}</span>
+      <div style={{ display: "inline-flex", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
+        {info.modes.map((mode, i) => {
+          const active = mode.toLowerCase() === info.current.toLowerCase();
+          return (
+            <button
+              key={mode}
+              onClick={() => setMode(mode)}
+              disabled={busy}
+              style={{
+                border: "none",
+                borderLeft: i === 0 ? "none" : "1px solid var(--border-default)",
+                background: active ? "var(--accent-btn-bg)" : "transparent",
+                color: active ? "var(--accent-btn-text)" : "var(--text-primary)",
+                fontFamily: "inherit", fontSize: 12, padding: "5px 14px",
+                cursor: busy ? "default" : "pointer",
+              }}
+            >
+              {label(mode)}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StatTile({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent?: string }) {
+  return (
+    <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", borderRadius: "var(--radius-sm)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+        <span style={{ display: "flex", color: accent || "var(--text-tertiary)" }}>{icon}</span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+      </div>
+      <div style={{ fontSize: 16, fontWeight: 600, fontVariantNumeric: "tabular-nums", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+const MAX_SAMPLES = 60;
+
+function MetricsOverview() {
+  const running = useAppStore((s) => s.status.running);
+  const t = useT();
+  const [m, setM] = useState<CoreMetrics | null>(null);
+  const [samples, setSamples] = useState<{ up: number; down: number }[]>([]);
+  const prev = useRef<{ up: number; down: number; ts: number } | null>(null);
+
+  useEffect(() => {
+    if (!running) { setM(null); setSamples([]); prev.current = null; return; }
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    (async () => {
+      const fn = await listen<CoreMetrics>("metrics-tick", (e) => {
+        const cur = e.payload;
+        setM(cur);
+        // Derive speed from cumulative totals — robust regardless of how the
+        // core computes its instantaneous rate.
+        const now = Date.now();
+        const p = prev.current;
+        if (p && now > p.ts) {
+          const dt = (now - p.ts) / 1000;
+          const up = Math.max(0, (cur.uplink_total - p.up) / dt);
+          const down = Math.max(0, (cur.downlink_total - p.down) / dt);
+          setSamples((s) => [...s, { up, down }].slice(-MAX_SAMPLES));
+        }
+        prev.current = { up: cur.uplink_total, down: cur.downlink_total, ts: now };
+      });
+      if (cancelled) { fn(); return; }
+      unlisten = fn;
+    })();
+    return () => { cancelled = true; unlisten?.(); };
+  }, [running]);
+
+  const last = samples[samples.length - 1] ?? { up: 0, down: 0 };
+  const dash = (v: string) => (running ? v : "—");
+
+  return (
+    <div className="fluent-card reveal-target" style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="card-header" style={{ marginBottom: 0 }}>{t("dashboard.traffic")}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+        <StatTile icon={<ArrowUpRegular style={{ fontSize: 14 }} />} label={t("dashboard.upSpeed")} value={dash(formatSpeed(last.up))} accent="var(--status-success)" />
+        <StatTile icon={<ArrowDownRegular style={{ fontSize: 14 }} />} label={t("dashboard.downSpeed")} value={dash(formatSpeed(last.down))} accent="var(--accent-default)" />
+        <StatTile icon={<PlugConnectedRegular style={{ fontSize: 14 }} />} label={t("dashboard.connections")} value={running && m ? String(m.connections_in) : "—"} />
+        <StatTile icon={<ServerRegular style={{ fontSize: 14 }} />} label={t("dashboard.memory")} value={running && m ? formatBytes(m.memory) : "—"} />
+        <StatTile icon={<ArrowUploadRegular style={{ fontSize: 14 }} />} label={t("dashboard.upTotal")} value={running && m ? formatBytes(m.uplink_total) : "—"} />
+        <StatTile icon={<ArrowDownloadRegular style={{ fontSize: 14 }} />} label={t("dashboard.downTotal")} value={running && m ? formatBytes(m.downlink_total) : "—"} />
+      </div>
+      <TrafficChart samples={running ? samples : []} />
+      <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--text-secondary)" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 9, height: 3, borderRadius: 2, background: "var(--status-success)" }} /> {t("dashboard.upSpeed")}
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 9, height: 3, borderRadius: 2, background: "var(--accent-default)" }} /> {t("dashboard.downSpeed")}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 export function Dashboard() {
@@ -375,53 +561,31 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* Status Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-        <div className="fluent-card reveal-target" style={{ padding: "16px 18px" }}>
-          <div className="card-header">
-            <ServerRegular style={{ fontSize: 16 }} />
-            {t("dashboard.status")}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span
-              className={`status-dot ${
-                status.running ? (status.proxy_enabled ? "proxy" : "running") : "stopped"
-              }`}
-            />
-            <span style={{ fontSize: 18, fontWeight: 600 }}>
-              {status.running
-                ? status.proxy_enabled ? t("dashboard.status.proxyActive") : t("dashboard.status.running")
-                : t("dashboard.status.stopped")}
-            </span>
-          </div>
+      {/* Status + uptime + clash mode */}
+      <div className="fluent-card reveal-target" style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            className={`status-dot ${
+              status.running ? (status.proxy_enabled ? "proxy" : "running") : "stopped"
+            }`}
+          />
+          <span style={{ fontSize: 16, fontWeight: 600 }}>
+            {status.running
+              ? status.proxy_enabled ? t("dashboard.status.proxyActive") : t("dashboard.status.running")
+              : t("dashboard.status.stopped")}
+          </span>
         </div>
-
-        <div className="fluent-card reveal-target" style={{ padding: "16px 18px" }}>
-          <div className="card-header">
-            <TimerRegular style={{ fontSize: 16 }} />
-            {t("dashboard.uptime")}
-          </div>
-          <div style={{ fontSize: 18, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-            {formatUptime(uptime)}
-          </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 13 }}>
+          <TimerRegular style={{ fontSize: 15 }} />
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatUptime(uptime)}</span>
         </div>
-
-        <div className="fluent-card reveal-target" style={{ padding: "16px 18px" }}>
-          <div className="card-header">
-            <PlugConnectedRegular style={{ fontSize: 16 }} />
-            {t("dashboard.connection")}
-          </div>
-          <div
-            style={{
-              fontSize: 13,
-              color: status.running ? "var(--text-primary)" : "var(--text-tertiary)",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {status.running ? status.proxy_server || t("common.na") : "—"}
-          </div>
+        <div style={{ marginLeft: "auto" }}>
+          <ClashModeSelector />
         </div>
       </div>
+
+      {/* Live metrics: traffic, connections, memory + chart */}
+      <MetricsOverview />
 
       {/* Outbound IP */}
       <OutboundIpCard />

@@ -1,0 +1,120 @@
+import { useEffect, useState, useCallback } from "react";
+import { DismissRegular, DismissCircleRegular } from "@fluentui/react-icons";
+import { invoke } from "@tauri-apps/api/core";
+import { useAppStore } from "../stores/appStore";
+import { useReveal } from "../hooks/useReveal";
+import { useT } from "../i18n/strings";
+import { formatBytes, formatDuration, normalizeMs } from "../lib/format";
+import type { ConnInfo } from "../types";
+
+export function Connections() {
+  const running = useAppStore((s) => s.status.running);
+  const t = useT();
+  const revealRef = useReveal<HTMLDivElement>();
+  const [conns, setConns] = useState<ConnInfo[]>([]);
+
+  const refresh = useCallback(async () => {
+    if (!running) { setConns([]); return; }
+    try {
+      setConns(await invoke<ConnInfo[]>("get_connections"));
+    } catch {
+      /* keep the last snapshot */
+    }
+  }, [running]);
+
+  useEffect(() => {
+    if (!running) { setConns([]); return; }
+    refresh();
+    const id = setInterval(refresh, 1500);
+    return () => clearInterval(id);
+  }, [running, refresh]);
+
+  const closeOne = async (id: string) => {
+    try { await invoke("close_connection", { id }); } catch { /* noop */ }
+    setConns((c) => c.filter((x) => x.id !== id));
+  };
+
+  const closeAll = async () => {
+    try { await invoke("close_all_connections"); } catch { /* noop */ }
+    setConns([]);
+  };
+
+  const sorted = [...conns].sort((a, b) => b.upload + b.download - (a.upload + a.download));
+
+  return (
+    <div
+      ref={revealRef}
+      className="animate-in"
+      style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 16, height: "100%" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
+          {t("connections.title")}
+        </h1>
+        <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+          {t("connections.count", { count: sorted.length })}
+        </span>
+        <button
+          className="fluent-btn reveal-target"
+          onClick={closeAll}
+          disabled={!running || sorted.length === 0}
+          style={{ marginLeft: "auto", fontSize: 12, minHeight: 30, padding: "4px 12px" }}
+        >
+          <DismissRegular style={{ fontSize: 14 }} />
+          {t("connections.closeAll")}
+        </button>
+      </div>
+
+      {!running ? (
+        <div className="fluent-card" style={{ padding: "40px 0", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+          {t("connections.startToView")}
+        </div>
+      ) : sorted.length === 0 ? (
+        <div className="fluent-card" style={{ padding: "40px 0", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+          {t("connections.empty")}
+        </div>
+      ) : (
+        <div className="fluent-card" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>
+          {sorted.map((c) => (
+            <div
+              key={c.id}
+              style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "10px 14px", borderBottom: "1px solid var(--border-divider)",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {c.domain || c.destination || c.id}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {[
+                    c.network ? c.network.toUpperCase() : "",
+                    c.chain.length ? c.chain.join(" → ") : c.outbound,
+                    c.rule,
+                  ].filter(Boolean).join("  ·  ")}
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", fontSize: 11, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums", flexShrink: 0, minWidth: 82 }}>
+                <span>↑ {formatBytes(c.upload)}</span>
+                <span>↓ {formatBytes(c.download)}</span>
+              </div>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums", flexShrink: 0, width: 46, textAlign: "right" }}>
+                {c.created_at > 0 ? formatDuration(normalizeMs(c.created_at)) : "—"}
+              </span>
+              <button
+                className="fluent-btn reveal-target"
+                onClick={() => closeOne(c.id)}
+                title={t("connections.close")}
+                aria-label={t("connections.close")}
+                style={{ flexShrink: 0, minHeight: 28, minWidth: 32, padding: "4px 8px" }}
+              >
+                <DismissCircleRegular style={{ fontSize: 14 }} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

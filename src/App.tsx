@@ -4,16 +4,18 @@ import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
 import { Proxies } from "./pages/Proxies";
+import { Connections } from "./pages/Connections";
 import { Logs } from "./pages/Logs";
 import { Settings } from "./pages/Settings";
 import { useAppStore } from "./stores/appStore";
-import type { CoreStatus, ProxyGroup } from "./types";
+import type { CoreStatus, ProxyGroup, Page } from "./types";
 
 export function App() {
   const page = useAppStore((s) => s.page);
   const fetchStatus = useAppStore((s) => s.fetchStatus);
   const setStatus = useAppStore((s) => s.setStatus);
   const setGroups = useAppStore((s) => s.setGroups);
+  const setPage = useAppStore((s) => s.setPage);
 
   // Initialize: fetch status and set up event listeners
   useEffect(() => {
@@ -27,12 +29,18 @@ export function App() {
       setGroups(e.payload);
     });
 
+    // Tray can request navigation (e.g. "active connections").
+    const unlistenNav = listen<string>("navigate", (e) => {
+      setPage(e.payload as Page);
+    });
+
     // Poll status every 5 seconds for uptime updates
     const interval = setInterval(fetchStatus, 5000);
 
     return () => {
       unlistenStatus.then((f) => f());
       unlistenGroups.then((f) => f());
+      unlistenNav.then((f) => f());
       clearInterval(interval);
     };
   }, []);
@@ -57,6 +65,7 @@ export function App() {
         <main style={{ flex: 1, overflow: "auto" }}>
           {page === "dashboard" && <Dashboard />}
           {page === "proxies" && <Proxies />}
+          {page === "connections" && <Connections />}
           {page === "logs" && <Logs />}
           {page === "settings" && <Settings />}
         </main>

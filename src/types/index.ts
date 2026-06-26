@@ -41,6 +41,37 @@ export interface OutboundIpInfo {
   asn: string;
 }
 
+export interface CoreMetrics {
+  memory: number;
+  goroutines: number;
+  connections_in: number;
+  connections_out: number;
+  uplink: number;
+  downlink: number;
+  uplink_total: number;
+  downlink_total: number;
+}
+
+export interface ClashModeInfo {
+  modes: string[];
+  current: string;
+}
+
+export interface ConnInfo {
+  id: string;
+  network: string;
+  protocol: string;
+  source: string;
+  destination: string;
+  domain: string;
+  outbound: string;
+  chain: string[];
+  rule: string;
+  upload: number;
+  download: number;
+  created_at: number;
+}
+
 export interface ConfigEntry {
   name: string;
   active: boolean;
@@ -73,6 +104,6 @@ export interface CoreUpdateCheck {
 
 export type DelayMap = Record<string, number>;
 
-export type Page = "dashboard" | "proxies" | "logs" | "settings";
+export type Page = "dashboard" | "proxies" | "connections" | "logs" | "settings";
 
 export type Theme = "light" | "dark" | "system";
