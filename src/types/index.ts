@@ -23,11 +23,33 @@ export interface AppSettings {
   silent_start: boolean;
   active_config: string;
   run_as_admin: boolean;
+  log_level: string;
+  log_persist: boolean;
+}
+
+export interface LogLine {
+  source: string;
+  level: string;
+  message: string;
+  seq: number;
+  ts: number;
+}
+
+export interface OutboundIpInfo {
+  ip: string;
+  country: string;
+  asn: string;
 }
 
 export interface ConfigEntry {
   name: string;
   active: boolean;
+}
+
+export interface CheckResult {
+  ok: boolean;
+  message: string;
+  content: string;
 }
 
 export interface CoreBuildInfo {
@@ -51,6 +73,6 @@ export interface CoreUpdateCheck {
 
 export type DelayMap = Record<string, number>;
 
-export type Page = "dashboard" | "proxies" | "settings";
+export type Page = "dashboard" | "proxies" | "logs" | "settings";
 
 export type Theme = "light" | "dark" | "system";

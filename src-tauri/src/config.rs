@@ -20,6 +20,14 @@ pub struct ConfigEntry {
     pub active: bool,
 }
 
+/// Outcome of a `sing-box check` + `format` run on a config file.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CheckResult {
+    pub ok: bool,
+    pub message: String,
+    pub content: String,
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn configs_dir(base_dir: &Path) -> PathBuf {
@@ -53,8 +61,12 @@ pub fn config_path(base_dir: &Path, name: &str) -> Result<PathBuf, AppError> {
     Ok(configs_dir(base_dir).join(format!("{name}.json")))
 }
 
-/// Read the active config, inject clash_api settings, write config_runtime.json.
-pub fn prepare_runtime_config(base_dir: &Path, config_name: &str) -> Result<ConfigInfo, AppError> {
+/// Read the active config, inject the native API + log level, write config_runtime.json.
+pub fn prepare_runtime_config(
+    base_dir: &Path,
+    config_name: &str,
+    log_level: &str,
+) -> Result<ConfigInfo, AppError> {
     let path = config_path(base_dir, config_name)?;
     let raw = std::fs::read_to_string(&path)
         .map_err(|e| AppError::Config(format!("read {config_name}.json: {e}")))?;
@@ -63,6 +75,7 @@ pub fn prepare_runtime_config(base_dir: &Path, config_name: &str) -> Result<Conf
         serde_json::from_str(&raw).map_err(|e| AppError::Config(format!("parse config: {e}")))?;
 
     let (api_address, api_secret) = inject_api(&mut config)?;
+    inject_log_level(&mut config, log_level);
     let proxy_server = extract_proxy_server(&config);
 
     let runtime_path = base_dir.join("config_runtime.json");
@@ -148,7 +161,48 @@ pub async fn save_config(
     Ok(())
 }
 
-/// Create a new config with a minimal sing-box template
+/// Validate a config with `sing-box check`, then rewrite it with `format -w`.
+/// Returns the (possibly reformatted) content so the editor can refresh.
+#[tauri::command]
+pub async fn check_and_format_config(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    name: String,
+) -> Result<CheckResult, AppError> {
+    let (sb_path, cfg_path) = {
+        let mgr = mgr.lock().await;
+        (mgr.base_dir.join("sing-box.exe"), config_path(&mgr.base_dir, &name)?)
+    };
+    if !sb_path.exists() {
+        return Err(AppError::Config("sing-box.exe not found".into()));
+    }
+    if !cfg_path.exists() {
+        return Err(AppError::Config(format!("config '{name}' not found")));
+    }
+
+    let check = run_singbox(&sb_path, &["check", "-c"], &cfg_path).await?;
+    if !check.status.success() {
+        return Ok(CheckResult {
+            ok: false,
+            message: combine_output(&check),
+            content: std::fs::read_to_string(&cfg_path).unwrap_or_default(),
+        });
+    }
+
+    let fmt = run_singbox(&sb_path, &["format", "-w", "-c"], &cfg_path).await?;
+    if !fmt.status.success() {
+        return Ok(CheckResult {
+            ok: false,
+            message: combine_output(&fmt),
+            content: std::fs::read_to_string(&cfg_path).unwrap_or_default(),
+        });
+    }
+
+    let content = std::fs::read_to_string(&cfg_path)
+        .map_err(|e| AppError::Config(format!("read {name}.json: {e}")))?;
+    Ok(CheckResult { ok: true, message: String::new(), content })
+}
+
+/// Create a new, empty config file
 #[tauri::command]
 pub async fn create_config(
     mgr: tauri::State<'_, crate::manager::Manager>,
@@ -160,7 +214,7 @@ pub async fn create_config(
     if path.exists() {
         return Err(AppError::Config(format!("config '{name}' already exists")));
     }
-    std::fs::write(&path, MINIMAL_CONFIG)
+    std::fs::write(&path, "")
         .map_err(|e| AppError::Config(format!("create {name}.json: {e}")))?;
     info!(name = %name, "new config created");
     Ok(())
@@ -219,27 +273,6 @@ pub async fn rename_config(
 
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
-const MINIMAL_CONFIG: &str = r#"{
-  "log": {
-    "level": "info"
-  },
-  "inbounds": [
-    {
-      "type": "mixed",
-      "tag": "mixed-in",
-      "listen": "127.0.0.1",
-      "listen_port": 2080
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ]
-}
-"#;
-
 /// Ensure `key` in `parent` is an object, replacing any non-object value.
 fn ensure_object<'a>(parent: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Value> {
     let slot = parent
@@ -277,28 +310,94 @@ fn inject_api(config: &mut Value) -> Result<(String, String), AppError> {
     }
     let arr = services.as_array_mut().unwrap();
 
-    if let Some(api) = arr
-        .iter()
+    let api = match arr
+        .iter_mut()
         .find(|s| s.get("type").and_then(|v| v.as_str()) == Some("api"))
     {
-        let listen = api.get("listen").and_then(|v| v.as_str()).unwrap_or(DEFAULT_HOST);
-        let port = api.get("listen_port").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_PORT);
-        let secret = api
-            .get("secret")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let host = if listen == "0.0.0.0" || listen == "::" { DEFAULT_HOST } else { listen };
-        return Ok((format!("{host}:{port}"), secret));
-    }
+        Some(s) => s,
+        None => {
+            arr.push(json!({
+                "type": "api",
+                "tag": "sing-box-launcher",
+                "listen": DEFAULT_HOST,
+                "listen_port": DEFAULT_PORT,
+            }));
+            arr.last_mut().unwrap()
+        }
+    };
+    let api = api
+        .as_object_mut()
+        .ok_or_else(|| AppError::Config("api service must be a JSON object".into()))?;
 
-    arr.push(json!({
-        "type": "api",
-        "tag": "sing-box-launcher",
-        "listen": DEFAULT_HOST,
-        "listen_port": DEFAULT_PORT,
-    }));
-    Ok((format!("{DEFAULT_HOST}:{DEFAULT_PORT}"), String::new()))
+    let listen = api
+        .get("listen")
+        .and_then(|v| v.as_str())
+        .unwrap_or(DEFAULT_HOST)
+        .to_string();
+    let port = api.get("listen_port").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_PORT);
+
+    // Ensure the loopback control port is authenticated: keep a user-provided
+    // secret, otherwise generate one and inject it into the runtime config.
+    let secret = match api.get("secret").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => {
+            let s = generate_secret();
+            api.insert("secret".into(), Value::String(s.clone()));
+            s
+        }
+    };
+
+    let host = if listen == "0.0.0.0" || listen == "::" { DEFAULT_HOST } else { &listen };
+    Ok((format!("{host}:{port}"), secret))
+}
+
+/// Run a sing-box subcommand against a config path without a console window.
+async fn run_singbox(
+    sb: &Path,
+    args: &[&str],
+    cfg: &Path,
+) -> Result<std::process::Output, AppError> {
+    let mut cmd = tokio::process::Command::new(sb);
+    cmd.args(args).arg(cfg);
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.output()
+        .await
+        .map_err(|e| AppError::Process(format!("run sing-box: {e}")))
+}
+
+fn combine_output(out: &std::process::Output) -> String {
+    let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+    s.push_str(&String::from_utf8_lossy(&out.stderr));
+    s.trim().to_string()
+}
+
+/// Override `log.level` in the config so the GUI setting drives core verbosity.
+fn inject_log_level(config: &mut Value, level: &str) {
+    if let Some(obj) = config.as_object_mut() {
+        let log = ensure_object(obj, "log");
+        log.insert("level".into(), Value::String(level.to_string()));
+    }
+}
+
+/// Generate a random 128-bit hex token for the native API secret.
+fn generate_secret() -> String {
+    let mut bytes = [0u8; 16];
+    if getrandom::getrandom(&mut bytes).is_err() {
+        use sha2::{Digest, Sha256};
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let mut h = Sha256::new();
+        h.update(nanos.to_le_bytes());
+        h.update(std::process::id().to_le_bytes());
+        bytes.copy_from_slice(&h.finalize()[..16]);
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Find the first HTTP/SOCKS/mixed inbound -> "host:port"

@@ -1,6 +1,7 @@
 import {
   BoardRegular,
   GlobeRegular,
+  TextBulletListSquareRegular,
   SettingsRegular,
   NavigationRegular,
 } from "@fluentui/react-icons";
@@ -11,6 +12,7 @@ import type { Page } from "../types";
 const navItems: { id: Page; icon: React.ReactNode; key: TranslationKey }[] = [
   { id: "dashboard", icon: <BoardRegular />, key: "nav.dashboard" },
   { id: "proxies", icon: <GlobeRegular />, key: "nav.proxies" },
+  { id: "logs", icon: <TextBulletListSquareRegular />, key: "nav.logs" },
   { id: "settings", icon: <SettingsRegular />, key: "nav.settings" },
 ];
 

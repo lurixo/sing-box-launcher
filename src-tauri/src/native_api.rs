@@ -12,6 +12,7 @@ pub mod pb {
     tonic::include_proto!("daemon");
 }
 
+use pb::outbound_trace_service_client::OutboundTraceServiceClient;
 use pb::started_service_client::StartedServiceClient;
 
 const MAX_RETRIES: u32 = 10;
@@ -25,6 +26,14 @@ pub struct ProxyGroup {
     pub r#type: String,
     pub now: String,
     pub all: Vec<String>,
+}
+
+/// Outbound IP details resolved through the native trace service.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OutboundIpInfo {
+    pub ip: String,
+    pub country: String,
+    pub asn: String,
 }
 
 #[derive(Clone)]
@@ -151,6 +160,73 @@ impl NativeClient {
         info!(group, tested = result.len(), "delay test complete");
         Ok(result)
     }
+
+    fn trace_client(&self) -> OutboundTraceServiceClient<Channel> {
+        OutboundTraceServiceClient::new(self.channel.clone())
+    }
+
+    async fn get_outbound_trace(&self, ipv6: bool) -> Result<String, AppError> {
+        let resp = self
+            .trace_client()
+            .get_outbound_trace(self.req(pb::OutboundTraceRequest { ipv6 }))
+            .await
+            .map_err(status)?;
+        Ok(resp.into_inner().json)
+    }
+
+    async fn get_domain_strategy(&self) -> Result<String, AppError> {
+        let resp = self
+            .trace_client()
+            .get_domain_strategy(self.req(pb::Empty {}))
+            .await
+            .map_err(status)?;
+        Ok(resp.into_inner().value)
+    }
+
+    async fn trace_info(&self, ipv6: bool) -> Option<OutboundIpInfo> {
+        let raw = self.get_outbound_trace(ipv6).await.ok()?;
+        parse_trace(&raw, ipv6)
+    }
+
+    /// Resolve the current outbound IP(s), honouring the domain strategy so a
+    /// v4-only or v6-only outbound is not probed for the family it lacks.
+    pub async fn get_outbound_ip(&self) -> Result<Vec<OutboundIpInfo>, AppError> {
+        let strategy = self.get_domain_strategy().await.unwrap_or_default();
+        let mut out = Vec::new();
+        if strategy != "ipv6_only" {
+            if let Some(info) = self.trace_info(false).await {
+                out.push(info);
+            }
+        }
+        if strategy != "ipv4_only" {
+            if let Some(info) = self.trace_info(true).await {
+                out.push(info);
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Parse a trace payload `{ip, country_code, asn}`, rejecting the wrong family.
+fn parse_trace(raw: &str, ipv6: bool) -> Option<OutboundIpInfo> {
+    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let ip = v.get("ip").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    if ip.is_empty() {
+        return None;
+    }
+    if ipv6 && !ip.contains(':') {
+        return None;
+    }
+    let asn = match v.get("asn").and_then(|x| x.as_i64()).unwrap_or(0) {
+        n if n > 0 => format!("AS{n}"),
+        _ => String::new(),
+    };
+    let country = v
+        .get("country_code")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some(OutboundIpInfo { ip, country, asn })
 }
 
 fn status(s: tonic::Status) -> AppError {

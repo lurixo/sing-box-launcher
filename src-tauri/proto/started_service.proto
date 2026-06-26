@@ -44,3 +44,20 @@ service StartedService {
   rpc URLTest(URLTestRequest) returns (Empty) {}
   rpc SelectOutbound(SelectOutboundRequest) returns (Empty) {}
 }
+
+message OutboundTraceRequest {
+  bool ipv6 = 1;
+}
+
+message OutboundTraceReply {
+  string json = 1;
+}
+
+message DomainStrategyReply {
+  string value = 1;
+}
+
+service OutboundTraceService {
+  rpc GetOutboundTrace(OutboundTraceRequest) returns (OutboundTraceReply) {}
+  rpc GetDomainStrategy(Empty) returns (DomainStrategyReply) {}
+}

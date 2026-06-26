@@ -4,6 +4,7 @@ import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
 import { Proxies } from "./pages/Proxies";
+import { Logs } from "./pages/Logs";
 import { Settings } from "./pages/Settings";
 import { useAppStore } from "./stores/appStore";
 import type { CoreStatus, ProxyGroup } from "./types";
@@ -56,6 +57,7 @@ export function App() {
         <main style={{ flex: 1, overflow: "auto" }}>
           {page === "dashboard" && <Dashboard />}
           {page === "proxies" && <Proxies />}
+          {page === "logs" && <Logs />}
           {page === "settings" && <Settings />}
         </main>
       </div>

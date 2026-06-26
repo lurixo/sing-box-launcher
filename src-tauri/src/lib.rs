@@ -5,6 +5,7 @@ mod core_update;
 mod elevation;
 mod error;
 mod groups;
+mod logbus;
 mod manager;
 mod native_api;
 mod proxy;
@@ -197,6 +198,19 @@ async fn test_group_delay(
 }
 
 #[tauri::command]
+async fn get_outbound_ip(
+    grp: tauri::State<'_, groups::Groups>,
+) -> Result<Vec<native_api::OutboundIpInfo>, AppError> {
+    let client = {
+        let grp = grp.lock().await;
+        grp.client
+            .clone()
+            .ok_or_else(|| AppError::ClashApi("not connected".into()))?
+    };
+    client.get_outbound_ip().await
+}
+
+#[tauri::command]
 async fn open_base_dir(mgr: tauri::State<'_, manager::Manager>) -> Result<(), AppError> {
     let mgr = mgr.lock().await;
     let dir = mgr.base_dir.clone();
@@ -214,12 +228,16 @@ pub fn run() {
     let dl = open_debug_log();
     dlog(&dl, &format!("=== sing-box-launcher starting (pid {}) ===", std::process::id()));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "sing_box_launcher_lib=debug".parse().unwrap()),
-        )
-        .init();
+    let logbus = logbus::LogBus::new();
+    {
+        use tracing_subscriber::prelude::*;
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "sing_box_launcher_lib=debug".parse().unwrap());
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(logbus::BusLayer::new(logbus.clone()))
+            .init();
+    }
 
     dlog(&dl, "tracing subscriber initialized");
 
@@ -239,12 +257,13 @@ pub fn run() {
         std::process::exit(0);
     }
 
-    let mgr = manager::new_manager(base_dir);
+    let mgr = manager::new_manager(base_dir, logbus.clone());
     let grp = groups::new_groups();
 
     dlog(&dl, "building tauri app...");
 
     let dl_setup = dl.clone();
+    let logbus_setup = logbus.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -252,6 +271,7 @@ pub fn run() {
         ))
         .manage(mgr)
         .manage(grp)
+        .manage(logbus)
         .invoke_handler(tauri::generate_handler![
             start_core,
             stop_core,
@@ -261,11 +281,13 @@ pub fn run() {
             get_proxy_groups,
             switch_proxy,
             test_group_delay,
+            get_outbound_ip,
             open_base_dir,
             accent::get_system_accent,
             config::list_configs,
             config::get_config,
             config::save_config,
+            config::check_and_format_config,
             config::create_config,
             config::delete_config,
             config::rename_config,
@@ -273,6 +295,10 @@ pub fn run() {
             settings::set_silent_start,
             settings::set_active_config,
             settings::set_run_as_admin,
+            settings::set_log_level,
+            settings::set_log_persist,
+            logbus::get_logs,
+            logbus::clear_logs,
             proxy::enable_uwp_loopback,
             core_update::get_core_info,
             core_update::check_core_update,
@@ -281,6 +307,7 @@ pub fn run() {
         ])
         .setup(move |app| {
             dlog(&dl_setup, "setup: entering closure");
+            logbus_setup.attach(app.handle().clone());
 
             match tray::setup_tray(app.handle()) {
                 Ok(_) => dlog(&dl_setup, "setup: tray OK"),

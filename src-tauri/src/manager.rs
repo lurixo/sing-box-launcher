@@ -2,12 +2,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::config::{self, ConfigInfo};
 use crate::error::AppError;
+use crate::logbus::{self, LogBus};
 
 /// Core process status exposed to the frontend
 #[derive(Debug, Clone, serde::Serialize)]
@@ -29,11 +31,12 @@ pub struct ManagerInner {
     pub api_secret: String,
     pub proxy_enabled: bool,
     started_at: Option<std::time::Instant>,
+    logbus: LogBus,
 }
 
 pub type Manager = Arc<Mutex<ManagerInner>>;
 
-pub fn new_manager(base_dir: PathBuf) -> Manager {
+pub fn new_manager(base_dir: PathBuf, logbus: LogBus) -> Manager {
     Arc::new(Mutex::new(ManagerInner {
         base_dir,
         child: None,
@@ -43,6 +46,7 @@ pub fn new_manager(base_dir: PathBuf) -> Manager {
         api_secret: String::new(),
         proxy_enabled: false,
         started_at: None,
+        logbus,
     }))
 }
 
@@ -72,35 +76,51 @@ impl ManagerInner {
         }
 
         let settings = crate::settings::load_settings(&self.base_dir);
-        let config_name = &settings.active_config;
+        let config_name = settings.active_config.clone();
 
-        self.validate_files(config_name)?;
+        self.validate_files(&config_name)?;
 
-        // Prepare runtime config
-        let info = config::prepare_runtime_config(&self.base_dir, config_name)?;
+        // Prepare runtime config, applying the configured log level.
+        let info =
+            config::prepare_runtime_config(&self.base_dir, &config_name, &settings.log_level)?;
 
         let runtime_path = self.base_dir.join("config_runtime.json");
         let sb_path = self.base_dir.join("sing-box.exe");
         let log_path = self.base_dir.join("sing-box.log");
 
-        // Open log file for stdout/stderr
-        let log_file = std::fs::File::create(&log_path)
-            .map_err(|e| AppError::Process(format!("create log file: {e}")))?;
-        let log_file_err = log_file
-            .try_clone()
-            .map_err(|e| AppError::Process(format!("clone log file: {e}")))?;
+        // Persist core logs to a file only when requested, appending so the
+        // history survives restarts; otherwise logs live in the bus only.
+        let persist_file = if settings.log_persist {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .ok()
+                .map(|f| Arc::new(std::sync::Mutex::new(f)))
+        } else {
+            None
+        };
 
         let mut child = build_command(&sb_path, &runtime_path, &self.base_dir)
-            .stdout(std::process::Stdio::from(log_file))
-            .stderr(std::process::Stdio::from(log_file_err))
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| AppError::Process(format!("spawn sing-box: {e}")))?;
 
+        if let Some(out) = child.stdout.take() {
+            spawn_reader(out, self.logbus.clone(), persist_file.clone());
+        }
+        if let Some(err) = child.stderr.take() {
+            spawn_reader(err, self.logbus.clone(), persist_file.clone());
+        }
+
         // Catch configs that make sing-box exit immediately on startup.
         tokio::time::sleep(Duration::from_millis(500)).await;
         if let Ok(Some(st)) = child.try_wait() {
-            let tail = read_log_tail(&log_path, 1200);
+            // Give the readers a moment to drain the closed pipes.
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let tail = core_log_tail(&self.logbus);
             return Err(AppError::Process(format!(
                 "sing-box exited on startup (code {:?}). {tail}",
                 st.code()
@@ -205,22 +225,39 @@ fn build_command(sb_path: &Path, runtime_path: &Path, base_dir: &Path) -> Comman
     cmd
 }
 
-/// Read the trailing portion of a log file (last `max` chars), char-safe.
-fn read_log_tail(path: &Path, max: usize) -> String {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return String::new();
-    };
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    let tail: String = trimmed
-        .chars()
-        .rev()
-        .take(max)
-        .collect::<Vec<char>>()
+/// Read core lines from a process pipe, persisting and forwarding each to the bus.
+fn spawn_reader<R>(reader: R, bus: LogBus, persist: Option<Arc<std::sync::Mutex<std::fs::File>>>)
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(reader).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(f) = &persist {
+                if let Ok(mut f) = f.lock() {
+                    use std::io::Write;
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+            let level = logbus::parse_core_level(&line);
+            bus.push("core", level, line);
+        }
+    });
+}
+
+/// Build a short tail of the most recent core log lines for error messages.
+fn core_log_tail(bus: &LogBus) -> String {
+    let lines: Vec<String> = bus
+        .snapshot()
         .into_iter()
-        .rev()
+        .filter(|l| l.source == "core")
+        .map(|l| l.message)
         .collect();
-    format!("Log: {tail}")
+    let start = lines.len().saturating_sub(15);
+    let tail = lines[start..].join("\n");
+    if tail.trim().is_empty() {
+        String::new()
+    } else {
+        format!("Log: {tail}")
+    }
 }
