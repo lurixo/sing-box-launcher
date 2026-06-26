@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package daemon;
+
+message Empty {}
+
+message Version {
+  string version = 1;
+  int32 apiVersion = 2;
+}
+
+message Groups {
+  repeated Group group = 1;
+}
+
+message Group {
+  string tag = 1;
+  string type = 2;
+  bool selectable = 3;
+  string selected = 4;
+  bool isExpand = 5;
+  repeated GroupItem items = 6;
+}
+
+message GroupItem {
+  string tag = 1;
+  string type = 2;
+  int64 urlTestTime = 3;
+  int32 urlTestDelay = 4;
+}
+
+message URLTestRequest {
+  string outboundTag = 1;
+}
+
+message SelectOutboundRequest {
+  string groupTag = 1;
+  string outboundTag = 2;
+}
+
+service StartedService {
+  rpc GetVersion(Empty) returns (Version) {}
+  rpc SubscribeGroups(Empty) returns (stream Groups) {}
+  rpc URLTest(URLTestRequest) returns (Empty) {}
+  rpc SelectOutbound(SelectOutboundRequest) returns (Empty) {}
+}

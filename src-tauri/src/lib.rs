@@ -1,11 +1,12 @@
 use tauri::Emitter;
 mod accent;
-mod clash;
 mod config;
 mod core_update;
+mod elevation;
 mod error;
 mod groups;
 mod manager;
+mod native_api;
 mod proxy;
 mod settings;
 mod tray;
@@ -17,8 +18,8 @@ use std::sync::{Arc, Mutex};
 use tauri::Manager;
 use tracing::info;
 
-use crate::clash::ClashClient;
 use crate::error::AppError;
+use crate::native_api::NativeClient;
 
 // ─── Debug file logger (works even with windows_subsystem = "windows") ──────
 
@@ -64,21 +65,25 @@ async fn start_core(
     let _ = app.emit("core-status-changed", mgr.status());
 
     // Load proxy groups in the background
-    let client = ClashClient::new(&info.api_address, &info.api_secret);
-    let grp = grp.inner().clone();
-    let app2 = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut grp = grp.lock().await;
-        match grp.load(client).await {
-            Ok(groups) => {
-                info!(count = groups.len(), "proxy groups loaded");
-                let _ = app2.emit("proxy-groups-updated", &groups);
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to load proxy groups");
-            }
+    match NativeClient::new(&info.api_address, &info.api_secret) {
+        Ok(client) => {
+            let grp = grp.inner().clone();
+            let app2 = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut grp = grp.lock().await;
+                match grp.load(client).await {
+                    Ok(groups) => {
+                        info!(count = groups.len(), "proxy groups loaded");
+                        let _ = app2.emit("proxy-groups-updated", &groups);
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to load proxy groups");
+                    }
+                }
+            });
         }
-    });
+        Err(e) => tracing::warn!(error = %e, "failed to create api client"),
+    }
 
     Ok(info)
 }
@@ -159,7 +164,7 @@ async fn toggle_system_proxy(
 #[tauri::command]
 async fn get_proxy_groups(
     grp: tauri::State<'_, groups::Groups>,
-) -> Result<Vec<clash::ProxyGroup>, AppError> {
+) -> Result<Vec<native_api::ProxyGroup>, AppError> {
     let grp = grp.lock().await;
     Ok(grp.groups.clone())
 }
@@ -182,8 +187,13 @@ async fn test_group_delay(
     grp: tauri::State<'_, groups::Groups>,
     group: String,
 ) -> Result<HashMap<String, i32>, AppError> {
-    let grp = grp.lock().await;
-    grp.test_delay(&group).await
+    let client = {
+        let grp = grp.lock().await;
+        grp.client
+            .clone()
+            .ok_or_else(|| AppError::ClashApi("not connected".into()))?
+    };
+    client.test_group_delay(&group).await
 }
 
 #[tauri::command]
@@ -223,6 +233,12 @@ pub fn run() {
     let silent = app_settings.silent_start;
     dlog(&dl, &format!("silent_start = {silent}"));
 
+    // Relaunch elevated (UAC) before building the app so the core can use TUN
+    if elevation::should_exit_for_elevation(app_settings.run_as_admin) {
+        dlog(&dl, "relaunching elevated; exiting unelevated instance");
+        std::process::exit(0);
+    }
+
     let mgr = manager::new_manager(base_dir);
     let grp = groups::new_groups();
 
@@ -256,10 +272,12 @@ pub fn run() {
             settings::get_settings,
             settings::set_silent_start,
             settings::set_active_config,
+            settings::set_run_as_admin,
             proxy::enable_uwp_loopback,
             core_update::get_core_info,
             core_update::check_core_update,
             core_update::update_core,
+            elevation::is_admin,
         ])
         .setup(move |app| {
             dlog(&dl_setup, "setup: entering closure");

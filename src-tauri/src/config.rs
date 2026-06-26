@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use tracing::info;
 
 use crate::error::AppError;
@@ -62,7 +62,7 @@ pub fn prepare_runtime_config(base_dir: &Path, config_name: &str) -> Result<Conf
     let mut config: Value =
         serde_json::from_str(&raw).map_err(|e| AppError::Config(format!("parse config: {e}")))?;
 
-    let (api_address, api_secret) = inject_clash_api(&mut config)?;
+    let (api_address, api_secret) = inject_api(&mut config)?;
     let proxy_server = extract_proxy_server(&config);
 
     let runtime_path = base_dir.join("config_runtime.json");
@@ -251,41 +251,54 @@ fn ensure_object<'a>(parent: &'a mut Map<String, Value>, key: &str) -> &'a mut M
     slot.as_object_mut().unwrap()
 }
 
-/// Ensure `experimental.clash_api.external_controller` exists.
-fn inject_clash_api(config: &mut Value) -> Result<(String, String), AppError> {
-    const DEFAULT_ADDR: &str = "127.0.0.1:9090";
+/// Ensure a sing-box native `api` service exists in `services[]` and that
+/// `experimental.cache_file` is enabled (for selector persistence).
+/// Returns the API `host:port` and secret to connect with.
+fn inject_api(config: &mut Value) -> Result<(String, String), AppError> {
+    const DEFAULT_HOST: &str = "127.0.0.1";
+    const DEFAULT_PORT: u64 = 9090;
 
     let obj = config
         .as_object_mut()
         .ok_or_else(|| AppError::Config("config root must be a JSON object".into()))?;
 
     let experimental = ensure_object(obj, "experimental");
-    let clash_api = ensure_object(experimental, "clash_api");
-
-    let addr = match clash_api.get("external_controller").and_then(|v| v.as_str()) {
-        Some(a) if !a.is_empty() => a.to_string(),
-        _ => {
-            clash_api.insert(
-                "external_controller".into(),
-                Value::String(DEFAULT_ADDR.into()),
-            );
-            DEFAULT_ADDR.to_string()
-        }
-    };
-
-    let secret = clash_api
-        .get("secret")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
     let cache_file = ensure_object(experimental, "cache_file");
     cache_file.entry("enabled").or_insert(Value::Bool(true));
     cache_file
         .entry("path")
         .or_insert_with(|| Value::String("cache.db".into()));
 
-    Ok((addr, secret))
+    let services = obj
+        .entry("services")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if !services.is_array() {
+        *services = Value::Array(Vec::new());
+    }
+    let arr = services.as_array_mut().unwrap();
+
+    if let Some(api) = arr
+        .iter()
+        .find(|s| s.get("type").and_then(|v| v.as_str()) == Some("api"))
+    {
+        let listen = api.get("listen").and_then(|v| v.as_str()).unwrap_or(DEFAULT_HOST);
+        let port = api.get("listen_port").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_PORT);
+        let secret = api
+            .get("secret")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let host = if listen == "0.0.0.0" || listen == "::" { DEFAULT_HOST } else { listen };
+        return Ok((format!("{host}:{port}"), secret));
+    }
+
+    arr.push(json!({
+        "type": "api",
+        "tag": "sing-box-launcher",
+        "listen": DEFAULT_HOST,
+        "listen_port": DEFAULT_PORT,
+    }));
+    Ok((format!("{DEFAULT_HOST}:{DEFAULT_PORT}"), String::new()))
 }
 
 /// Find the first HTTP/SOCKS/mixed inbound -> "host:port"

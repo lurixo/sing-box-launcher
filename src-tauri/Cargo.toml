@@ -12,6 +12,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.5", features = [] }
+tonic-build = "0.12"
+protoc-bin-vendored = "3"
 
 [dependencies]
 tauri = { version = "2.10", features = ["tray-icon"] }
@@ -25,15 +27,18 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4"
-urlencoding = "2.1"
 sha2 = "0.10"
 zip = { version = "8", default-features = false, features = ["deflate"] }
+tonic = "0.12"
+prost = "0.13"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
 windows = { version = "0.61", features = [
     "Win32_Networking_WinInet",
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
 ] }
 
 [profile.release]

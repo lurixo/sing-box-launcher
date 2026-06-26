@@ -22,6 +22,7 @@ export interface ProxyGroup {
 export interface AppSettings {
   silent_start: boolean;
   active_config: string;
+  run_as_admin: boolean;
 }
 
 export interface ConfigEntry {

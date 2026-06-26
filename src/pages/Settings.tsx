@@ -16,12 +16,18 @@ import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { useReveal } from "../hooks/useReveal";
+import { useT, type TranslationKey, type Lang } from "../i18n/strings";
 import type { Theme, AppSettings, CoreInfo, CoreUpdateCheck, CoreBuildInfo } from "../types";
 
-const themes: { id: Theme; icon: React.ReactNode; label: string }[] = [
-  { id: "light", icon: <WeatherSunnyRegular />, label: "Light" },
-  { id: "dark", icon: <WeatherMoonRegular />, label: "Dark" },
-  { id: "system", icon: <DesktopRegular />, label: "System" },
+const themes: { id: Theme; icon: React.ReactNode; key: TranslationKey }[] = [
+  { id: "light", icon: <WeatherSunnyRegular />, key: "settings.themeLight" },
+  { id: "dark", icon: <WeatherMoonRegular />, key: "settings.themeDark" },
+  { id: "system", icon: <DesktopRegular />, key: "settings.themeSystem" },
+];
+
+const langs: { id: Lang; label: string }[] = [
+  { id: "zh-CN", label: "简体中文" },
+  { id: "en", label: "English" },
 ];
 
 function ToggleSwitch({
@@ -74,6 +80,9 @@ export function Settings() {
   const setAccentColor = useAppStore((s) => s.setAccentColor);
   const accentSource = useAppStore((s) => s.accentSource);
   const setAccentSource = useAppStore((s) => s.setAccentSource);
+  const lang = useAppStore((s) => s.lang);
+  const setLang = useAppStore((s) => s.setLang);
+  const t = useT();
   const revealRef = useReveal<HTMLDivElement>();
 
   const status = useAppStore((s) => s.status);
@@ -87,9 +96,13 @@ export function Settings() {
   const [silentStart, setSilentStart] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(true);
 
+  // ─── Elevation state ─────────────────────────────────────────────
+  const [runAsAdmin, setRunAsAdmin] = useState(true);
+  const [elevated, setElevated] = useState(true);
+
   // ─── UWP state ───────────────────────────────────────────────────
   const [uwpLoading, setUwpLoading] = useState(false);
-  const [uwpResult, setUwpResult] = useState<string | null>(null);
+  const [uwpResult, setUwpResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   // ─── Core state ──────────────────────────────────────────────────
   const [coreInfo, setCoreInfo] = useState<CoreInfo | null>(null);
@@ -113,12 +126,23 @@ export function Settings() {
         setAutostart(enabled);
         const settings = await invoke<AppSettings>("get_settings");
         setSilentStart(settings.silent_start);
+        setRunAsAdmin(settings.run_as_admin);
+        setElevated(await invoke<boolean>("is_admin"));
       } catch (e) {
         setGenErr(String(e));
       }
       setAutostartLoading(false);
     })();
   }, []);
+
+  const handleRunAsAdminToggle = async (val: boolean) => {
+    try {
+      await invoke("set_run_as_admin", { enabled: val });
+      setRunAsAdmin(val);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
 
   // Load version + core info, listen for update progress
   useEffect(() => {
@@ -163,8 +187,8 @@ export function Settings() {
       setCoreCheck(c);
       setCoreMsg(
         c.update_available
-          ? { type: "info", text: `Update available: ${c.latest.version}` }
-          : { type: "ok", text: "Core is up to date." }
+          ? { type: "info", text: t("settings.updateAvailable", { version: c.latest.version }) }
+          : { type: "ok", text: t("settings.upToDate") }
       );
     } catch (e) {
       setCoreMsg({ type: "err", text: String(e) });
@@ -177,7 +201,7 @@ export function Settings() {
     setCoreMsg(null);
     try {
       const info = await invoke<CoreBuildInfo>("update_core");
-      setCoreMsg({ type: "ok", text: `Core updated to ${info.version}.` });
+      setCoreMsg({ type: "ok", text: t("settings.coreUpdated", { version: info.version }) });
       setCoreCheck(null);
       await loadCoreInfo();
     } catch (e) {
@@ -191,9 +215,9 @@ export function Settings() {
     setUwpResult(null);
     try {
       const result = await invoke<string>("enable_uwp_loopback");
-      setUwpResult(result);
+      setUwpResult({ ok: true, text: result });
     } catch (e) {
-      setUwpResult(`Error: ${e}`);
+      setUwpResult({ ok: false, text: String(e) });
     }
     setUwpLoading(false);
   };
@@ -212,7 +236,7 @@ export function Settings() {
       style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 20 }}
     >
       <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
-        Settings
+        {t("settings.title")}
       </h1>
 
       {genErr && (
@@ -223,19 +247,36 @@ export function Settings() {
             onClick={() => setGenErr(null)}
             style={{ padding: "2px 8px", minHeight: 24, fontSize: 12 }}
           >
-            Dismiss
+            {t("common.dismiss")}
           </button>
         </div>
       )}
 
       {/* ─── General ─── */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>General</div>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("settings.general")}</div>
+
+        {/* Run as administrator */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.runAsAdmin")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+              {t("settings.runAsAdminDesc")}
+            </div>
+          </div>
+          <ToggleSwitch checked={runAsAdmin} onChange={handleRunAsAdminToggle} />
+        </div>
+
+        {runAsAdmin && !elevated && (
+          <div className="infobar" style={{ marginTop: 4, marginBottom: 4, background: "var(--status-warning-bg)", borderColor: "var(--status-warning)" }}>
+            {t("settings.notElevated")}
+          </div>
+        )}
 
         {/* Autostart */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>Launch at startup</div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.launchAtStartup")}</div>
           </div>
           {autostartLoading ? (
             <span className="progress-ring" style={{ width: 20, height: 20, borderWidth: 2 }} />
@@ -248,9 +289,9 @@ export function Settings() {
         {autostart && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
             <div>
-              <div style={{ fontSize: 13, fontWeight: 500 }}>Silent start</div>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.silentStart")}</div>
               <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-                Minimize to tray on launch
+                {t("settings.silentStartDesc")}
               </div>
             </div>
             <ToggleSwitch checked={silentStart} onChange={handleSilentToggle} />
@@ -260,9 +301,9 @@ export function Settings() {
         {/* UWP Loopback */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0" }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>UWP loopback</div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.uwpLoopback")}</div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-              Launch loopback tool so UWP apps can use the local proxy
+              {t("settings.uwpLoopbackDesc")}
             </div>
           </div>
           <button
@@ -276,7 +317,7 @@ export function Settings() {
             ) : (
               <GlobeRegular style={{ fontSize: 14 }} />
             )}
-            Open Tool
+            {t("settings.openTool")}
           </button>
         </div>
 
@@ -285,29 +326,43 @@ export function Settings() {
             className="infobar"
             style={{
               marginTop: 4,
-              background: uwpResult.startsWith("Error") ? "var(--status-danger-bg)" : "var(--status-success-bg)",
-              borderColor: uwpResult.startsWith("Error") ? "var(--status-danger)" : "var(--status-success)",
+              background: uwpResult.ok ? "var(--status-success-bg)" : "var(--status-danger-bg)",
+              borderColor: uwpResult.ok ? "var(--status-success)" : "var(--status-danger)",
             }}
           >
-            {uwpResult}
+            {uwpResult.text}
           </div>
         )}
       </div>
 
-      {/* ─── Theme Mode ─── */}
+      {/* ─── Appearance ─── */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>Appearance</div>
-        <div className="section-label" style={{ marginBottom: 10 }}>Theme</div>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>{t("settings.appearance")}</div>
+        <div className="section-label" style={{ marginBottom: 10 }}>{t("settings.theme")}</div>
         <div style={{ display: "flex", gap: 8 }}>
-          {themes.map((t) => (
+          {themes.map((th) => (
             <button
-              key={t.id}
-              className={`fluent-btn reveal-target ${theme === t.id ? "accent" : ""}`}
-              onClick={() => setTheme(t.id)}
+              key={th.id}
+              className={`fluent-btn reveal-target ${theme === th.id ? "accent" : ""}`}
+              onClick={() => setTheme(th.id)}
               style={{ flex: 1, flexDirection: "column", gap: 4, padding: "10px 8px" }}
             >
-              <span style={{ fontSize: 18, display: "flex" }}>{t.icon}</span>
-              <span style={{ fontSize: 12 }}>{t.label}</span>
+              <span style={{ fontSize: 18, display: "flex" }}>{th.icon}</span>
+              <span style={{ fontSize: 12 }}>{t(th.key)}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="section-label" style={{ marginTop: 16, marginBottom: 10 }}>{t("settings.language")}</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {langs.map((l) => (
+            <button
+              key={l.id}
+              className={`fluent-btn reveal-target ${lang === l.id ? "accent" : ""}`}
+              onClick={() => setLang(l.id)}
+              style={{ flex: 1, padding: "8px" }}
+            >
+              <span style={{ fontSize: 13 }}>{l.label}</span>
             </button>
           ))}
         </div>
@@ -317,14 +372,14 @@ export function Settings() {
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
           <ColorRegular style={{ fontSize: 18 }} />
-          Accent Color
+          {t("settings.accentColor")}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, padding: "8px 0" }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>Follow system accent</div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.followSystemAccent")}</div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-              Use the accent color from Windows settings
+              {t("settings.followSystemAccentDesc")}
             </div>
           </div>
           <ToggleSwitch
@@ -335,7 +390,7 @@ export function Settings() {
 
         {accentSource === "manual" && (
           <>
-            <div className="section-label" style={{ marginBottom: 10 }}>Presets</div>
+            <div className="section-label" style={{ marginBottom: 10 }}>{t("settings.presets")}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
               {ACCENT_PRESETS.map((preset) => (
                 <button
@@ -343,13 +398,13 @@ export function Settings() {
                   className={`accent-swatch ${accentColor.toLowerCase() === preset.hex.toLowerCase() ? "active" : ""}`}
                   style={{ background: preset.hex }}
                   onClick={() => setAccentColor(preset.hex)}
-                  aria-label={`Accent color: ${preset.label}`}
+                  aria-label={t("settings.accentColorSwatch", { name: preset.label })}
                   title={preset.label}
                 />
               ))}
             </div>
 
-            <div className="section-label" style={{ marginBottom: 8 }}>Custom</div>
+            <div className="section-label" style={{ marginBottom: 8 }}>{t("settings.custom")}</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <div
                 style={{
@@ -382,7 +437,7 @@ export function Settings() {
                   onClick={handleCustomAccent}
                   style={{ borderRadius: 0, minHeight: 30, fontSize: 12, padding: "4px 12px", border: "none" }}
                 >
-                  Apply
+                  {t("settings.apply")}
                 </button>
               </div>
             </div>
@@ -391,7 +446,7 @@ export function Settings() {
 
         {/* Accent scale preview */}
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>Accent scale</div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>{t("settings.accentScale")}</div>
           <div style={{ display: "flex", borderRadius: "var(--radius-sm)", overflow: "hidden", height: 28 }}>
             {[
               "var(--accent-dark-3)", "var(--accent-dark-2)", "var(--accent-dark-1)",
@@ -408,18 +463,18 @@ export function Settings() {
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
           <BoxRegular style={{ fontSize: 18 }} />
-          Core
+          {t("settings.core")}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0" }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>sing-box core</div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.singboxCore")}</div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
               {coreInfo?.present
                 ? coreInfo.build
-                  ? `Version ${coreInfo.build.version}`
-                  : "Installed (version unknown)"
-                : "Not installed"}
+                  ? t("settings.coreVersion", { version: coreInfo.build.version })
+                  : t("settings.coreInstalledUnknown")
+                : t("settings.coreNotInstalled")}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -434,18 +489,18 @@ export function Settings() {
               ) : (
                 <ArrowSyncRegular style={{ fontSize: 14 }} />
               )}
-              Check
+              {t("settings.check")}
             </button>
             {(coreCheck?.update_available || !coreInfo?.present) && (
               <button
                 className="fluent-btn accent reveal-target"
                 onClick={handleUpdateCore}
                 disabled={coreBusy || status.running}
-                title={status.running ? "Stop the core before updating" : undefined}
+                title={status.running ? t("settings.stopToUpdate") : undefined}
                 style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
               >
                 <ArrowDownloadRegular style={{ fontSize: 14 }} />
-                {coreInfo?.present ? "Update" : "Download"}
+                {coreInfo?.present ? t("settings.update") : t("settings.download")}
               </button>
             )}
           </div>
@@ -453,7 +508,7 @@ export function Settings() {
 
         {status.running && (coreCheck?.update_available || !coreInfo?.present) && (
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
-            Stop the core to update it.
+            {t("settings.stopToUpdate")}
           </div>
         )}
 
@@ -483,14 +538,14 @@ export function Settings() {
 
       {/* ─── About ─── */}
       <div className="fluent-card" style={{ padding: "18px 20px" }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>About</div>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>{t("settings.about")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "var(--text-secondary)" }}>
           <div>
             <strong style={{ color: "var(--text-primary)" }}>sing-box launcher</strong>
             {appVersion ? ` v${appVersion}` : ""}
           </div>
-          <div>A lightweight GUI for managing the sing-box proxy core.</div>
-          <div style={{ marginTop: 4 }}>Built with Tauri v2 + React 19 + Rust</div>
+          <div>{t("settings.aboutDesc")}</div>
+          <div style={{ marginTop: 4 }}>{t("settings.builtWith")}</div>
         </div>
       </div>
     </div>

@@ -9,6 +9,10 @@ fn default_active_config() -> String {
     "default".into()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Persistent application settings stored in settings.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -16,6 +20,8 @@ pub struct AppSettings {
     pub silent_start: bool,
     #[serde(default = "default_active_config")]
     pub active_config: String,
+    #[serde(default = "default_true")]
+    pub run_as_admin: bool,
 }
 
 impl Default for AppSettings {
@@ -23,6 +29,7 @@ impl Default for AppSettings {
         Self {
             silent_start: false,
             active_config: "default".into(),
+            run_as_admin: true,
         }
     }
 }
@@ -72,6 +79,17 @@ pub async fn set_silent_start(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.silent_start = enabled;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_run_as_admin(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.run_as_admin = enabled;
     save_settings(&mgr.base_dir, &settings)
 }
 

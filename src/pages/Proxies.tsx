@@ -5,11 +5,13 @@ import {
   CheckmarkCircleFilled,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
+import { useT } from "../i18n/strings";
 
 function DelayBadge({ delay }: { delay?: number }) {
+  const t = useT();
   if (delay === undefined) return null;
   let cls = "timeout";
-  let text = "timeout";
+  let text = t("proxies.timeout");
   if (delay > 0 && delay < 200) {
     cls = "fast";
     text = `${delay}ms`;
@@ -36,6 +38,7 @@ export function Proxies() {
     error,
     clearError,
   } = useAppStore();
+  const t = useT();
 
   const [search, setSearch] = useState("");
 
@@ -59,10 +62,10 @@ export function Proxies() {
         }}
       >
         <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
-          Proxies
+          {t("proxies.title")}
         </h1>
         <div style={{ padding: "24px 0", textAlign: "center", color: "var(--text-tertiary)", fontSize: 14 }}>
-          Start the core to view proxy groups.
+          {t("proxies.startToView")}
         </div>
       </div>
     );
@@ -80,11 +83,11 @@ export function Proxies() {
         }}
       >
         <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
-          Proxies
+          {t("proxies.title")}
         </h1>
         <div style={{ padding: "24px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, color: "var(--text-tertiary)", fontSize: 14 }}>
           <span className="progress-ring" />
-          Loading proxy groups…
+          {t("proxies.loading")}
         </div>
       </div>
     );
@@ -93,7 +96,7 @@ export function Proxies() {
   return (
     <div className="animate-in" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, padding: "20px 28px 12px", color: "var(--text-primary)", flexShrink: 0 }}>
-        Proxies
+        {t("proxies.title")}
       </h1>
       {error && (
         <div className="infobar error" style={{ margin: "0 28px 12px", flexShrink: 0 }}>
@@ -103,7 +106,7 @@ export function Proxies() {
             onClick={clearError}
             style={{ padding: "2px 8px", minHeight: 24, fontSize: 12 }}
           >
-            Dismiss
+            {t("common.dismiss")}
           </button>
         </div>
       )}
@@ -131,7 +134,7 @@ export function Proxies() {
             padding: "4px 10px 8px",
           }}
         >
-          Groups ({groups.length})
+          {t("proxies.groupsCount", { count: groups.length })}
         </div>
         {groups.map((g) => (
           <button
@@ -175,7 +178,7 @@ export function Proxies() {
             <SearchRegular style={{ fontSize: 16, color: "var(--text-tertiary)" }} />
             <input
               type="text"
-              placeholder="Search nodes…"
+              placeholder={t("proxies.searchNodes")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{
@@ -200,7 +203,7 @@ export function Proxies() {
             ) : (
               <FlashRegular style={{ fontSize: 16 }} />
             )}
-            Test All
+            {t("proxies.testAll")}
           </button>
         </div>
 
@@ -218,10 +221,11 @@ export function Proxies() {
               {currentGroup.name}
             </strong>
             {" · "}
-            {filteredNodes.length} nodes
+            {t("proxies.nodesCount", { count: filteredNodes.length })}
             {currentGroup.now && (
               <>
-                {" · Selected: "}
+                {" · "}
+                {t("proxies.selected")}{" "}
                 <span style={{ color: "var(--accent-default)" }}>{currentGroup.now}</span>
               </>
             )}
