@@ -310,10 +310,12 @@ async fn open_core_location(mgr: tauri::State<'_, manager::Manager>) -> Result<(
     let base = mgr.lock().await.base_dir.clone();
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let core = base.join("sing-box.exe");
+        // raw_arg so only the path is quoted — `/select,"<path>"` survives spaces.
         let _ = if core.exists() {
             std::process::Command::new("explorer")
-                .arg(format!("/select,{}", core.display()))
+                .raw_arg(format!("/select,\"{}\"", core.display()))
                 .spawn()
         } else {
             std::process::Command::new("explorer").arg(&base).spawn()
@@ -430,11 +432,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
     if !allow_multiple {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
+            tray::show_main(app);
         }));
     }
     builder

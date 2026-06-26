@@ -55,7 +55,7 @@ fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
 /// Show, un-minimize and bring the main window to the foreground. The
 /// un-minimize + brief topmost toggle is required on Windows: `show()` alone
 /// does not restore a window the user minimized to the taskbar.
-fn show_main(app: &AppHandle) {
+pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();

@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -26,9 +26,9 @@ jobs:
           workspaces: src-tauri
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Install frontend dependencies
         run: npm ci
@@ -66,18 +66,19 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path portable | Out-Null
-          Copy-Item src-tauri/target/release/sing-box-launcher.exe portable/
-          Copy-Item stage/sing-box.exe portable/
-          Copy-Item stage/singbox-build-info.json portable/
-          Copy-Item src-tauri/resources/EnableLoopback.exe portable/
-          Compress-Archive -Path portable/* -DestinationPath "sing-box-launcher-${{ steps.version.outputs.VERSION }}-portable.zip" -Force
+          New-Item -ItemType Directory -Force -Path portable/data | Out-Null
+          Copy-Item src-tauri/target/release/Maestro.exe portable/
+          Copy-Item stage/sing-box.exe portable/data/
+          Copy-Item stage/singbox-build-info.json portable/data/
+          Copy-Item src-tauri/resources/EnableLoopback.exe portable/data/
+          Compress-Archive -Path portable/* -DestinationPath "maestro-${{ steps.version.outputs.VERSION }}-portable.zip" -Force
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "sing-box-launcher v${{ steps.version.outputs.VERSION }}"
+          name: "Maestro v${{ steps.version.outputs.VERSION }}"
           generate_release_notes: true
           files: |
-            sing-box-launcher-*-portable.zip
+            maestro-*-portable.zip
           draft: false
           prerelease: false
