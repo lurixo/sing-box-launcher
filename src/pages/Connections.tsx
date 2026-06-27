@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { DismissRegular, DismissCircleRegular } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../stores/appStore";
@@ -6,6 +7,16 @@ import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
 import { formatBytes, formatDuration, normalizeMs } from "../lib/format";
 import type { ConnInfo } from "../types";
+
+/** One connection as a single clipboard line. */
+function connLine(c: ConnInfo): string {
+  const meta = [
+    c.network ? c.network.toUpperCase() : "",
+    c.chain.length ? c.chain.join(" → ") : c.outbound,
+    c.rule,
+  ].filter(Boolean).join("  ·  ");
+  return `${c.domain || c.destination || c.id}  |  ${meta}  |  ↑ ${formatBytes(c.upload)}  ↓ ${formatBytes(c.download)}`;
+}
 
 export function Connections() {
   const running = useAppStore((s) => s.status.running);
@@ -43,6 +54,55 @@ export function Connections() {
   // button stays put under the cursor.
   const sorted = [...conns].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
 
+  // Drag-select to copy (round-9 I): a vertical drag over the rows highlights the
+  // covered range; on release it copies those rows to the clipboard — same gesture
+  // as the log page, no text highlight.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const dragRef = useRef<number | null>(null); // anchor index, or null when idle
+  const [copyMsg, setCopyMsg] = useState<string | null>(null);
+  useEffect(() => {
+    if (!copyMsg) return;
+    const id = setTimeout(() => setCopyMsg(null), 2000);
+    return () => clearTimeout(id);
+  }, [copyMsg]);
+
+  const rowIdxAt = (target: EventTarget | null): number | null => {
+    const el = (target as HTMLElement | null)?.closest?.(".conn-row[data-idx]") as HTMLElement | null;
+    if (!el) return null;
+    const i = Number(el.dataset.idx);
+    return Number.isFinite(i) ? i : null;
+  };
+
+  const selectRange = (anchor: number, cursor: number) => {
+    const lo = Math.min(anchor, cursor);
+    const hi = Math.max(anchor, cursor);
+    setSelected(new Set(sorted.slice(lo, hi + 1).map((c) => c.id)));
+  };
+
+  const onRowMouseDown = (e: ReactMouseEvent, idx: number) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+    e.preventDefault(); // no text highlight
+    dragRef.current = idx;
+    selectRange(idx, idx);
+  };
+
+  const onBodyMouseMove = (e: ReactMouseEvent) => {
+    if (dragRef.current == null) return;
+    const cur = rowIdxAt(e.target);
+    if (cur != null) selectRange(dragRef.current, cur);
+  };
+
+  const endDragCopy = () => {
+    if (dragRef.current == null) return;
+    dragRef.current = null;
+    const text = sorted.filter((c) => selected.has(c.id)).map(connLine).join("\n");
+    if (!text) return;
+    const count = selected.size;
+    navigator.clipboard?.writeText(text)
+      .then(() => setCopyMsg(t("connections.copied", { count })))
+      .catch(() => {});
+  };
+
   return (
     <div
       ref={revealRef}
@@ -76,14 +136,23 @@ export function Connections() {
           {t("connections.empty")}
         </div>
       ) : (
-        <div className="fluent-card" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0 }}>
-          {sorted.map((c) => (
+        <div
+          className="fluent-card"
+          onMouseMove={onBodyMouseMove}
+          onMouseUp={endDragCopy}
+          onMouseLeave={endDragCopy}
+          style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 0, userSelect: "none", WebkitUserSelect: "none" }}
+        >
+          {sorted.map((c, idx) => (
             <div
               key={c.id}
+              data-idx={idx}
               className="row-reveal"
+              onMouseDown={(e) => onRowMouseDown(e, idx)}
               style={{
                 display: "flex", alignItems: "center", gap: 12,
                 padding: "10px 14px", borderBottom: "1px solid var(--border-divider)",
+                background: selected.has(c.id) ? "var(--bg-subtle)" : undefined,
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -116,6 +185,21 @@ export function Connections() {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Floating "copied" toast — overlay, never displaces the list. */}
+      {copyMsg && (
+        <div
+          style={{
+            position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+            zIndex: 2000, padding: "8px 16px", borderRadius: "var(--radius-md)",
+            background: "var(--status-success-bg)", border: "1px solid var(--status-success)",
+            color: "var(--text-primary)", fontSize: 13, pointerEvents: "none",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.22)",
+          }}
+        >
+          {copyMsg}
         </div>
       )}
     </div>

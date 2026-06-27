@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { ArrowDownloadRegular, CopyRegular, DeleteRegular } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -195,30 +196,50 @@ export function Logs() {
   // Copy every currently-visible line (respects the source tab + level filter).
   const handleCopyAll = () => copyText(visible.map(fmtLine).join("\n"));
 
-  // Drag-to-select linkage: after a text selection is made inside the log body,
-  // tick the export checkbox of every row the selection touches — so picking
-  // text to copy and picking lines to export are the same gesture. Union into
-  // the existing selection (never clears prior manual picks).
-  const syncSelectionToCheckboxes = () => {
-    const sel = window.getSelection();
-    const container = scrollRef.current;
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !container) return;
-    // Ignore selections that don't live in the log body.
-    if (!container.contains(sel.anchorNode) && !container.contains(sel.focusNode)) return;
-    const add: number[] = [];
-    container.querySelectorAll<HTMLElement>(".log-row[data-seq]").forEach((row) => {
-      if (sel.containsNode(row, true)) {
-        const seq = Number(row.dataset.seq);
-        if (Number.isFinite(seq)) add.push(seq);
-      }
-    });
-    if (!add.length) return;
+  // Drag-to-select (round-9 B): a vertical mouse drag over the rows ticks/unticks
+  // each row's export checkbox as the cursor covers it — NO text highlight. The
+  // anchor row's current state picks the mode (check when it wasn't selected,
+  // else uncheck), applied to the whole [anchor..cursor] seq range.
+  const dragRef = useRef<{ anchor: number; mode: boolean } | null>(null);
+
+  const rowSeqAt = (target: EventTarget | null): number | null => {
+    const el = (target as HTMLElement | null)?.closest?.(".log-row[data-seq]") as HTMLElement | null;
+    if (!el) return null;
+    const seq = Number(el.dataset.seq);
+    return Number.isFinite(seq) ? seq : null;
+  };
+
+  const applyDragRange = (anchor: number, cursor: number, mode: boolean) => {
+    const lo = Math.min(anchor, cursor);
+    const hi = Math.max(anchor, cursor);
     setSelected((prev) => {
       const next = new Set(prev);
-      for (const s of add) next.add(s);
+      for (const l of visible) {
+        if (l.seq >= lo && l.seq <= hi) {
+          if (mode) next.add(l.seq);
+          else next.delete(l.seq);
+        }
+      }
       return next;
     });
   };
+
+  const onRowMouseDown = (e: ReactMouseEvent, seq: number) => {
+    // Left button only; let clicks on the checkbox / copy button work normally.
+    if (e.button !== 0 || (e.target as HTMLElement).closest("button, input")) return;
+    e.preventDefault(); // suppress text selection / highlight
+    const mode = !selected.has(seq);
+    dragRef.current = { anchor: seq, mode };
+    applyDragRange(seq, seq, mode);
+  };
+
+  const onBodyMouseMove = (e: ReactMouseEvent) => {
+    if (!dragRef.current) return;
+    const cur = rowSeqAt(e.target);
+    if (cur != null) applyDragRange(dragRef.current.anchor, cur, dragRef.current.mode);
+  };
+
+  const endDrag = () => { dragRef.current = null; };
 
   const tabBtn = (id: "core" | "app", label: string) => (
     <button
@@ -348,14 +369,16 @@ export function Logs() {
       <div
         ref={scrollRef}
         className="fluent-card"
-        onMouseUp={syncSelectionToCheckboxes}
+        onMouseMove={onBodyMouseMove}
+        onMouseUp={endDrag}
+        onMouseLeave={endDrag}
         style={{
           flex: 1, minHeight: 0, overflow: "auto", padding: "10px 12px",
           fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
           fontSize: 12, lineHeight: 1.55, background: "var(--bg-surface)",
-          // Allow click-drag text selection in the log body (the app disables
-          // user-select globally); the toolbar/checkboxes stay unaffected.
-          userSelect: "text", WebkitUserSelect: "text", cursor: "text",
+          // A drag over the rows ticks their checkboxes (round-9 B), so the log
+          // body must NOT start a text selection/highlight.
+          userSelect: "none", WebkitUserSelect: "none", cursor: "default",
         }}
       >
         {visible.length === 0 ? (
@@ -364,7 +387,7 @@ export function Logs() {
           </div>
         ) : (
           visible.map((l) => (
-            <div key={l.seq} data-seq={l.seq} className="log-row row-reveal" style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", alignItems: "flex-start", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
+            <div key={l.seq} data-seq={l.seq} className="log-row row-reveal" onMouseDown={(e) => onRowMouseDown(e, l.seq)} style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", alignItems: "flex-start", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
               <input
                 type="checkbox"
                 checked={selected.has(l.seq)}
