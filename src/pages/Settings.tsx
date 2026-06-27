@@ -10,9 +10,11 @@ import {
   ArrowDownloadRegular,
   FolderOpenRegular,
   DeleteRegular,
+  TagRegular,
 } from "@fluentui/react-icons";
 import { useAppStore } from "../stores/appStore";
 import { ACCENT_PRESETS } from "../lib/colorEngine";
+import { formatBytes } from "../lib/format";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
@@ -20,7 +22,7 @@ import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { useReveal } from "../hooks/useReveal";
 import { useT, type TranslationKey, type Lang } from "../i18n/strings";
 import type {
-  Theme, AppSettings, CoreInfo, CoreUpdateCheck, StagedKernel, KernelSource,
+  Theme, AppSettings, CoreInfo, CoreUpdateCheck, StagedKernel, KernelSource, KernelChannel,
   AppInfo, AppUpdateCheck, StagedApp,
 } from "../types";
 
@@ -133,8 +135,18 @@ export function Settings() {
   const [coreBusy, setCoreBusy] = useState(false);
   const [cacheBusy, setCacheBusy] = useState(false);
   const [kernelSource, setKernelSource] = useState<KernelSource>("lurixo");
-  // A staged-but-not-applied download; presence opens the restart-confirm modal.
+  const [kernelChannel, setKernelChannel] = useState<KernelChannel>("stable");
+  // A staged-but-not-applied download. `showApplyModal` controls the restart
+  // prompt; when a download is staged but the modal is dismissed, the kernel
+  // stays on disk (this session) and a "pending" banner offers apply/discard.
   const [staged, setStaged] = useState<StagedKernel | null>(null);
+  const [showApplyModal, setShowApplyModal] = useState(false);
+  // Post-check "found vX, download it?" confirmation (download is never automatic).
+  const [downloadPrompt, setDownloadPrompt] = useState<{ version: string } | null>(null);
+  // Toggles the installed build's release tag inline.
+  const [showTag, setShowTag] = useState(false);
+  // Live byte progress of an in-flight core download (for the progress bar).
+  const [dlProgress, setDlProgress] = useState<{ received: number; total: number | null } | null>(null);
   const [coreMsg, setCoreMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
 
   // ─── App self-update state ───────────────────────────────────────
@@ -167,6 +179,7 @@ export function Settings() {
         setAutoStartCore(settings.auto_start_core);
         setStartupDelay(settings.startup_delay_secs);
         setKernelSource(settings.kernel_source);
+        setKernelChannel(settings.kernel_channel);
         setElevated(await invoke<boolean>("is_admin"));
       } catch (e) {
         setGenErr(String(e));
@@ -235,21 +248,40 @@ export function Settings() {
     getVersion().then(setAppVersion).catch(() => {});
     loadCoreInfo();
     invoke<AppInfo>("get_app_info").then(setAppInfo).catch(() => {});
-    // Re-open the restart prompts for downloads staged in a prior session.
+    // Re-open the restart prompt for a download staged earlier this session.
     invoke<StagedKernel | null>("get_staged_kernel")
-      .then((s) => { if (s) setStaged(s); })
+      .then((s) => { if (s) { setStaged(s); setShowApplyModal(true); } })
       .catch(() => {});
     invoke<StagedApp | null>("get_staged_app_update")
       .then((s) => { if (s) setStagedApp(s); })
       .catch(() => {});
-    const unCore = listen<{ stage: string; message: string }>("core-update-progress", (e) => {
-      setCoreMsg({ type: e.payload.stage === "done" ? "ok" : "info", text: e.payload.message });
-    });
+    const unCore = listen<{ stage: string; message: string; received?: number; total?: number | null }>(
+      "core-update-progress",
+      (e) => {
+        const p = e.payload;
+        if (p.stage === "downloading" && typeof p.received === "number") {
+          // The progress bar renders the bytes; skip the raw English stage text.
+          setDlProgress({ received: p.received, total: p.total ?? null });
+          return;
+        }
+        setDlProgress(null);
+        setCoreMsg({ type: p.stage === "done" ? "ok" : "info", text: p.message });
+      },
+    );
     const unApp = listen<{ stage: string; message: string }>("app-update-progress", (e) => {
       setAppMsg({ type: e.payload.stage === "done" ? "ok" : "info", text: e.payload.message });
     });
     return () => { unCore.then((f) => f()); unApp.then((f) => f()); };
   }, [loadCoreInfo]);
+
+  // Transient core notices (canceled / pending / up-to-date / applied) clear
+  // themselves so they don't pile up next to the persistent controls; errors
+  // stay until the next action.
+  useEffect(() => {
+    if (!coreMsg || coreMsg.type === "err") return;
+    const id = setTimeout(() => setCoreMsg(null), 4000);
+    return () => clearTimeout(id);
+  }, [coreMsg]);
 
   const handleAutostartToggle = async (val: boolean) => {
     try {
@@ -289,17 +321,31 @@ export function Settings() {
     }
   };
 
+  const handleSetChannel = async (ch: KernelChannel) => {
+    if (ch === kernelChannel) return;
+    try {
+      await invoke("set_kernel_channel", { channel: ch });
+      setKernelChannel(ch);
+      // A check against the old channel no longer applies.
+      setCoreCheck(null);
+      setCoreMsg(null);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
+
+  // A check never downloads on its own: when an update is found, ask first.
   const handleCheckCore = async () => {
     setCoreBusy(true);
     setCoreMsg(null);
     try {
       const c = await invoke<CoreUpdateCheck>("check_core_update");
       setCoreCheck(c);
-      setCoreMsg(
-        c.update_available
-          ? { type: "info", text: t("settings.updateAvailable", { version: c.latest_version }) }
-          : { type: "ok", text: t("settings.upToDate") }
-      );
+      if (c.update_available) {
+        setDownloadPrompt({ version: c.latest_version });
+      } else {
+        setCoreMsg({ type: "ok", text: t("settings.upToDate") });
+      }
     } catch (e) {
       setCoreMsg({ type: "err", text: String(e) });
     }
@@ -307,22 +353,27 @@ export function Settings() {
   };
 
   // Download stages the new core next to the live one (the core may keep
-  // running); we then prompt the user to confirm the restart before applying.
+  // running); we then prompt the user to apply it (or keep it for later).
   const handleDownload = async () => {
+    setDownloadPrompt(null);
     setCoreBusy(true);
     setCoreMsg(null);
+    setDlProgress(null);
     try {
       const s = await invoke<StagedKernel>("download_kernel");
       setStaged(s);
+      setShowApplyModal(true);
     } catch (e) {
       setCoreMsg({ type: "err", text: String(e) });
     }
+    setDlProgress(null);
     setCoreBusy(false);
   };
 
   const handleApplyStaged = async () => {
     const s = staged;
     if (!s) return;
+    setShowApplyModal(false);
     setStaged(null);
     setCoreBusy(true);
     setCoreMsg({ type: "info", text: t("settings.applying") });
@@ -337,7 +388,21 @@ export function Settings() {
     setCoreBusy(false);
   };
 
-  const handleCancelStaged = async () => {
+  // "Apply later": close the prompt WITHOUT discarding or restarting. The staged
+  // core stays on disk for this session; a pending banner offers apply/discard.
+  const handleDeferStaged = () => {
+    setShowApplyModal(false);
+    if (staged) {
+      setCoreMsg({
+        type: "info",
+        text: t("settings.kernelPending", { version: `${sourceLabel(staged.source)} ${staged.version}` }),
+      });
+    }
+  };
+
+  // Explicit discard of the staged download (the only path that deletes it).
+  const handleDiscardStaged = async () => {
+    setShowApplyModal(false);
     setStaged(null);
     try {
       await invoke("discard_staged_kernel");
@@ -439,6 +504,25 @@ export function Settings() {
     if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
       setAccentColor(hex);
     }
+  };
+
+  // The stable/dev channel only exists for the GitHub sources (lurixo is a
+  // single pipeline). When the installed kernel's track (source or, for those
+  // sources, channel) differs from what's selected, "check" is meaningless
+  // (cross-track version comparison) → grey it and steer the user to download.
+  const channelApplies = kernelSource !== "lurixo";
+  const installedChannel = coreInfo?.channel ? coreInfo.channel : "stable";
+  const trackMismatch =
+    !!coreInfo?.present &&
+    (coreInfo.source !== kernelSource ||
+      (channelApplies && installedChannel !== kernelChannel));
+
+  const copyBuildTag = () => {
+    const tag = coreInfo?.tag;
+    if (!tag) return;
+    navigator.clipboard?.writeText(tag)
+      .then(() => setCoreMsg({ type: "ok", text: t("settings.buildTagCopied") }))
+      .catch(() => {});
   };
 
   return (
@@ -761,18 +845,57 @@ export function Settings() {
           {t("settings.kernelSourceDesc")}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderTop: "1px solid var(--border-divider)" }}>
-          <div>
+        {/* Channel (stable / dev) — only the GitHub sources have one; lurixo is
+            a single pre-release pipeline so the selector is hidden for it. */}
+        {channelApplies && (
+          <>
+            <div className="section-label" style={{ marginTop: 6, marginBottom: 8 }}>{t("settings.kernelChannel")}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {(["stable", "dev"] as KernelChannel[]).map((ch) => (
+                <button
+                  key={ch}
+                  className={`fluent-btn reveal-target ${kernelChannel === ch ? "accent" : ""}`}
+                  onClick={() => handleSetChannel(ch)}
+                  style={{ flex: 1, padding: "8px" }}
+                >
+                  <span style={{ fontSize: 13 }}>{ch === "stable" ? t("settings.channelStable") : t("settings.channelDev")}</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", margin: "8px 0 6px" }}>
+              {t("settings.channelDesc")}
+            </div>
+          </>
+        )}
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderTop: "1px solid var(--border-divider)", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.singboxCore")}</div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
               {coreInfo?.present
                 ? coreInfo.version
-                  ? `${sourceLabel(coreInfo.source)} ${coreInfo.version}`
+                  ? `${sourceLabel(coreInfo.source)}${coreInfo.channel ? ` · ${coreInfo.channel}` : ""} ${coreInfo.version}`
                   : t("settings.coreInstalledUnknown")
                 : t("settings.coreNotInstalled")}
             </div>
+            {showTag && (
+              <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span>{t("settings.viewBuildTag")}:</span>
+                {coreInfo?.tag ? (
+                  <code
+                    onClick={copyBuildTag}
+                    title={t("settings.buildTagCopied")}
+                    style={{ cursor: "pointer", userSelect: "text", WebkitUserSelect: "text", color: "var(--text-secondary)" }}
+                  >
+                    {coreInfo.tag}
+                  </code>
+                ) : (
+                  <span>{t("settings.buildTagNone")}</span>
+                )}
+              </div>
+            )}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
               className="fluent-btn reveal-target"
               onClick={() => invoke("open_core_location")}
@@ -782,9 +905,19 @@ export function Settings() {
               {t("settings.openCoreLocation")}
             </button>
             <button
+              className={`fluent-btn reveal-target ${showTag ? "accent" : ""}`}
+              onClick={() => setShowTag((v) => !v)}
+              disabled={!coreInfo?.present}
+              style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+            >
+              <TagRegular style={{ fontSize: 14 }} />
+              {t("settings.viewBuildTag")}
+            </button>
+            <button
               className="fluent-btn reveal-target"
               onClick={handleCheckCore}
-              disabled={coreBusy}
+              disabled={coreBusy || trackMismatch}
+              title={trackMismatch ? t("settings.checkMismatchHint") : undefined}
               style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
             >
               {coreBusy ? (
@@ -794,9 +927,7 @@ export function Settings() {
               )}
               {t("settings.check")}
             </button>
-            {(coreCheck?.update_available ||
-              !coreInfo?.present ||
-              (coreInfo?.present && coreInfo.source !== kernelSource)) && (
+            {(trackMismatch || coreCheck?.update_available || !coreInfo?.present) && (
               <button
                 className="fluent-btn accent reveal-target"
                 onClick={handleDownload}
@@ -808,7 +939,7 @@ export function Settings() {
                 ) : (
                   <ArrowDownloadRegular style={{ fontSize: 14 }} />
                 )}
-                {coreInfo?.present ? t("settings.update") : t("settings.download")}
+                {t("settings.download")}
               </button>
             )}
           </div>
@@ -838,9 +969,29 @@ export function Settings() {
           </button>
         </div>
 
-        {status.running && (
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
-            {t("settings.clearCacheRunning")}
+        {/* Live download progress bar (byte counts streamed from the backend). */}
+        {dlProgress && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
+              <span>
+                {dlProgress.total
+                  ? t("settings.downloadingPct", { pct: Math.floor((dlProgress.received / dlProgress.total) * 100) })
+                  : t("settings.downloading")}
+              </span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                {formatBytes(dlProgress.received)}{dlProgress.total ? ` / ${formatBytes(dlProgress.total)}` : ""}
+              </span>
+            </div>
+            <div style={{ height: 6, borderRadius: 3, background: "var(--bg-subtle)", overflow: "hidden" }}>
+              <div
+                style={{
+                  height: "100%",
+                  width: dlProgress.total ? `${Math.min(100, (dlProgress.received / dlProgress.total) * 100)}%` : "100%",
+                  background: "var(--accent-default)",
+                  transition: "width 0.15s linear",
+                }}
+              />
+            </div>
           </div>
         )}
 
@@ -864,6 +1015,31 @@ export function Settings() {
             }}
           >
             {coreMsg.text}
+          </div>
+        )}
+
+        {/* Pending staged kernel: a download kept after "apply later"/dismiss
+            stays on disk (this session) — offer to apply it (re-open the prompt)
+            or discard it explicitly. */}
+        {staged && !showApplyModal && (
+          <div className="infobar" style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ flex: 1, minWidth: 160 }}>
+              {t("settings.kernelPending", { version: `${sourceLabel(staged.source)} ${staged.version}` })}
+            </span>
+            <button
+              className="fluent-btn accent reveal-target"
+              onClick={() => setShowApplyModal(true)}
+              style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+            >
+              {t("settings.applyKernelApply")}
+            </button>
+            <button
+              className="fluent-btn reveal-target"
+              onClick={handleDiscardStaged}
+              style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+            >
+              {t("settings.kernelDiscard")}
+            </button>
           </div>
         )}
       </div>
@@ -951,9 +1127,9 @@ export function Settings() {
         )}
       </div>
 
-      {/* Restart-confirm modal: shown after a download stages a new core, before
-          it is applied. Confirm swaps + restarts the core; cancel discards it. */}
-      {staged && (
+      {/* Download-confirm: a check that finds an update asks before downloading
+          (the download is never automatic). */}
+      {downloadPrompt && (
         <div
           style={{
             position: "fixed", inset: 0, zIndex: 1000,
@@ -963,26 +1139,73 @@ export function Settings() {
         >
           <div className="fluent-card" style={{ width: 360, padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
-              {t("settings.applyKernelTitle")}
+              {t("settings.downloadPromptTitle")}
             </div>
             <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              {t("settings.applyKernelBody", { version: `${sourceLabel(staged.source)} ${staged.version}` })}
+              {t("settings.downloadPromptBody", { version: downloadPrompt.version })}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
               <button
                 className="fluent-btn reveal-target"
-                onClick={handleCancelStaged}
+                onClick={() => setDownloadPrompt(null)}
                 style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
               >
                 {t("settings.applyKernelCancel")}
               </button>
               <button
                 className="fluent-btn accent reveal-target"
-                onClick={handleApplyStaged}
+                onClick={handleDownload}
                 style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
               >
-                {t("settings.applyKernelConfirm")}
+                {t("settings.downloadConfirm")}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Apply-confirm modal: shown after a download stages a new core. Three
+          exits — discard the download, keep it for later (no restart), or apply
+          now (a running core restarts; a stopped one just swaps in place). */}
+      {staged && showApplyModal && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div className="fluent-card" style={{ width: 380, padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+              {t("settings.applyKernelTitle")}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              {t("settings.applyKernelBody", { version: `${sourceLabel(staged.source)} ${staged.version}` })}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
+              <button
+                className="fluent-btn reveal-target"
+                onClick={handleDiscardStaged}
+                style={{ fontSize: 13, minHeight: 32, padding: "4px 14px", color: "var(--status-danger)" }}
+              >
+                {t("settings.kernelDiscard")}
+              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="fluent-btn reveal-target"
+                  onClick={handleDeferStaged}
+                  style={{ fontSize: 13, minHeight: 32, padding: "4px 14px" }}
+                >
+                  {t("settings.applyKernelLater")}
+                </button>
+                <button
+                  className="fluent-btn accent reveal-target"
+                  onClick={handleApplyStaged}
+                  style={{ fontSize: 13, minHeight: 32, padding: "4px 14px" }}
+                >
+                  {t("settings.applyKernelConfirm")}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -990,9 +1213,9 @@ export function Settings() {
 
       {/* App self-update restart-confirm modal: confirm swaps Maestro's own exe
           and relaunches; cancel discards the staged download. Gated behind the
-          kernel modal so the two can't stack and trap the user when both are
-          staged — the kernel one is handled first. */}
-      {stagedApp && !staged && (
+          kernel apply modal so the two can't stack and trap the user when both
+          are open — the kernel one is handled first. */}
+      {stagedApp && !(staged && showApplyModal) && (
         <div
           style={{
             position: "fixed", inset: 0, zIndex: 1001,
