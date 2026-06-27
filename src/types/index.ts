@@ -33,7 +33,9 @@ export interface AppSettings {
   disable_gpu_compositing: boolean;
   kernel_source: KernelSource;
   kernel_channel: KernelChannel;
-  outbound_ip_card: boolean;
+  // null = unset (follows the kernel: on for lurixo, off otherwise); a boolean
+  // is an explicit user choice. Serialized from Rust's Option<bool>.
+  outbound_ip_card: boolean | null;
 }
 
 export type KernelSource = "lurixo" | "sagernet" | "ref1nd";

@@ -309,12 +309,14 @@ async fn get_outbound_ip(
     grp: tauri::State<'_, groups::Groups>,
 ) -> Result<Vec<native_api::OutboundIpInfo>, AppError> {
     // Privacy gate (defense-in-depth; the UI also skips the call): the outbound-IP
-    // card is opt-in AND only works on a lurixo kernel. When the toggle is off or
-    // the installed kernel isn't lurixo, fire NO OutboundTrace gRPC / third-party
-    // request — just return an empty result.
+    // card only works on a lurixo kernel, and there it is ON by default (an unset
+    // preference follows the kernel) but the user may have turned it off. When the
+    // kernel isn't lurixo or the effective choice is off, fire NO OutboundTrace
+    // gRPC / third-party request — just return an empty result (round-10 #10).
     let base_dir = mgr.lock().await.base_dir.clone();
     let settings = settings::load_settings(&base_dir);
-    if !settings.outbound_ip_card || !core_update::is_lurixo_kernel(&base_dir) {
+    let is_lurixo = core_update::is_lurixo_kernel(&base_dir);
+    if !is_lurixo || !settings.outbound_ip_card.unwrap_or(is_lurixo) {
         return Ok(Vec::new());
     }
     let client = {

@@ -885,10 +885,10 @@ pub async fn get_core_info(
     })
 }
 
-/// Run `sing-box.exe version` and return just the meaningful build info: the
-/// version line and the comma-separated build `Tags:` (the features the kernel
-/// was compiled with), dropping the Environment / Revision / CGO lines
-/// (round-9 J). Falls back to the raw first line if the format is unexpected.
+/// Run `sing-box.exe version` and return ONLY the build `Tags:` — the cleaned,
+/// comma-separated feature list the kernel was compiled with — dropping the
+/// version line, the `Tags:` prefix, the indentation and the Environment /
+/// Revision / CGO lines (round-10 #9). Empty string if there is no Tags line.
 #[tauri::command]
 pub async fn get_core_version(
     mgr: tauri::State<'_, crate::manager::Manager>,
@@ -899,16 +899,21 @@ pub async fn get_core_version(
         return Err(AppError::Update("sing-box.exe not found".into()));
     }
     let raw = run_version(&exe)?;
-    let kept: Vec<&str> = raw
+    // Pull just the `Tags:` line, strip the prefix, and re-join the comma list
+    // cleanly — no version line, no command echo, no leading indentation.
+    let tags = raw
         .lines()
         .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .filter(|l| l.starts_with("sing-box version") || l.starts_with("Tags:"))
-        .collect();
-    if kept.is_empty() {
-        return Ok(raw.lines().next().unwrap_or("").trim().to_string());
-    }
-    Ok(kept.join("\n"))
+        .find_map(|l| l.strip_prefix("Tags:"))
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    Ok(tags)
 }
 
 #[cfg(target_os = "windows")]

@@ -86,12 +86,15 @@ pub struct AppSettings {
     /// or "dev" (highest pre-release). Ignored by lurixo (single pipeline).
     #[serde(default = "default_kernel_channel")]
     pub kernel_channel: String,
-    /// Show the Dashboard's outbound-IP card. Default OFF: the card has the core
-    /// query a third-party geo-IP service through the proxy, so it is opt-in. Only
-    /// meaningful on a lurixo kernel (OutboundTrace is lurixo-specific); the UI
-    /// greys the toggle and the backend gates the query on a non-lurixo kernel.
+    /// Show the Dashboard's outbound-IP card. `None` = not chosen, so the effective
+    /// default follows the kernel: ON for a lurixo kernel, OFF otherwise. `Some(b)`
+    /// is an explicit user choice that wins. The card has the core query a
+    /// third-party geo-IP service through the proxy, and is only meaningful on a
+    /// lurixo kernel (OutboundTrace is lurixo-specific); the UI greys the toggle and
+    /// the backend gates the query on a non-lurixo kernel regardless (round-10 #10).
+    /// An older `false` on disk deserializes to `Some(false)` — an explicit off.
     #[serde(default)]
-    pub outbound_ip_card: bool,
+    pub outbound_ip_card: Option<bool>,
     /// Per-config remembered system-proxy choice (config name -> on/off). A config
     /// whose inbounds ask for the system proxy turns it on by default on its FIRST
     /// launch; once the user toggles it in the GUI, that choice is stored here and
@@ -116,7 +119,7 @@ impl Default for AppSettings {
             disable_gpu_compositing: false,
             kernel_source: default_kernel_source(),
             kernel_channel: default_kernel_channel(),
-            outbound_ip_card: false,
+            outbound_ip_card: None,
             proxy_overrides: HashMap::new(),
         }
     }
@@ -282,7 +285,8 @@ pub async fn set_outbound_ip_card(
 ) -> Result<(), AppError> {
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
-    settings.outbound_ip_card = enabled;
+    // Record the explicit user choice (Some) — overrides the kernel default.
+    settings.outbound_ip_card = Some(enabled);
     save_settings(&mgr.base_dir, &settings)
 }
 
