@@ -124,6 +124,7 @@ export function Settings() {
   const [closeToTray, setCloseToTray] = useState(true);
   const [exitCoreOnClose, setExitCoreOnClose] = useState(true);
   const [autoStartCore, setAutoStartCore] = useState(true);
+  const [outboundIpCard, setOutboundIpCard] = useState(false);
   const [startupDelay, setStartupDelay] = useState(30);
 
   // ─── UWP state ───────────────────────────────────────────────────
@@ -197,6 +198,7 @@ export function Settings() {
         setCloseToTray(settings.close_to_tray);
         setExitCoreOnClose(settings.exit_core_on_close);
         setAutoStartCore(settings.auto_start_core);
+        setOutboundIpCard(settings.outbound_ip_card);
         setStartupDelay(settings.startup_delay_secs);
         setKernelSource(settings.kernel_source);
         setKernelChannel(settings.kernel_channel);
@@ -248,6 +250,15 @@ export function Settings() {
     try {
       await invoke("set_auto_start_core", { enabled: val });
       setAutoStartCore(val);
+    } catch (e) {
+      setGenErr(String(e));
+    }
+  };
+
+  const handleOutboundIpCard = async (val: boolean) => {
+    try {
+      await invoke("set_outbound_ip_card", { enabled: val });
+      setOutboundIpCard(val);
     } catch (e) {
       setGenErr(String(e));
     }
@@ -709,6 +720,21 @@ export function Settings() {
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{t("settings.autoStartCoreDesc")}</div>
           </div>
           <ToggleSwitch checked={autoStartCore} onChange={handleAutoStartCore} />
+        </div>
+
+        {/* Outbound-IP card. Off by default — the card has the core query a
+            third-party geo-IP service through the proxy. Greyed + forced off on a
+            non-lurixo kernel (OutboundTrace is lurixo-specific). */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border-divider)" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.outboundIpCard")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{t("settings.outboundIpCardDesc")}</div>
+          </div>
+          <ToggleSwitch
+            checked={coreInfo?.source === "lurixo" && outboundIpCard}
+            onChange={handleOutboundIpCard}
+            disabled={coreInfo?.source !== "lurixo"}
+          />
         </div>
 
         {/* Autostart */}

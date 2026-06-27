@@ -33,6 +33,7 @@ export interface AppSettings {
   disable_gpu_compositing: boolean;
   kernel_source: KernelSource;
   kernel_channel: KernelChannel;
+  outbound_ip_card: boolean;
 }
 
 export type KernelSource = "lurixo" | "sagernet" | "ref1nd";

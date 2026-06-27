@@ -25,7 +25,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
 import { formatBytes, formatSpeed } from "../lib/format";
-import type { OutboundIpInfo, CoreMetrics, ClashModeInfo } from "../types";
+import type { OutboundIpInfo, CoreMetrics, ClashModeInfo, AppSettings, CoreInfo } from "../types";
 
 // Font size scaled to the address length so a full IPv6 never overflows the
 // inline slot in the status card (IPv4 ~14px down to ~10px for long IPv6).
@@ -57,12 +57,19 @@ function countryCodeToFlag(cc: string): string {
 let ipCache: OutboundIpInfo[] = [];
 let ipCacheNonce = -1;
 
-function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
+function OutboundIpInline({ refreshSignal = 0, enabled = null }: { refreshSignal?: number; enabled?: boolean | null }) {
   const running = useAppStore((s) => s.status.running);
   const [lines, setLines] = useState<OutboundIpInfo[]>(ipCache);
   const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
+    // Privacy gate: when the card is DEFINITIVELY disabled (toggle off or
+    // non-lurixo kernel) never query — no get_outbound_ip call, so no
+    // OutboundTrace gRPC / third party — and wipe the cache. While `enabled` is
+    // still resolving (null) keep the cache (so the instant-display optimization
+    // survives a page switch) but don't query yet.
+    if (enabled === false) { setLines([]); ipCache = []; ipCacheNonce = -1; return; }
+    if (enabled !== true) return; // null = resolving: don't query, don't wipe
     if (!running) { setLines([]); ipCache = []; ipCacheNonce = -1; return; }
     if (refreshSignal === ipCacheNonce) return; // remount with no real change → keep cache
     let cancelled = false;
@@ -90,7 +97,7 @@ function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
     };
     timer = setTimeout(tryFetch, refreshSignal <= 0 ? 800 : 600);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [running, refreshSignal]);
+  }, [running, refreshSignal, enabled]);
 
   const copy = (ip: string) => {
     navigator.clipboard?.writeText(ip).then(() => {
@@ -99,7 +106,7 @@ function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
     }).catch(() => {});
   };
 
-  if (!running || lines.length === 0) return null;
+  if (enabled !== true || !running || lines.length === 0) return null;
 
   // IPv4 on the first line, IPv6 on the second. Each line keeps its OWN flag,
   // ASN and IP — the two families can exit via different regions/networks, so
@@ -508,6 +515,26 @@ export function Dashboard() {
     useAppStore();
   const t = useT();
 
+  // The outbound-IP card is opt-in AND lurixo-kernel-only. Resolve both on mount
+  // (the page remounts on nav, so this re-reads after a Settings toggle or a
+  // kernel switch); when disabled the card never renders or queries.
+  // null = still resolving (keeps the IP card's instant-display cache intact on a
+  // page switch); false/true = the definitive gate.
+  const [ipCardEnabled, setIpCardEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const [s, ci] = await Promise.all([
+          invoke<AppSettings>("get_settings"),
+          invoke<CoreInfo>("get_core_info"),
+        ]);
+        setIpCardEnabled(!!s.outbound_ip_card && ci.source === "lurixo");
+      } catch {
+        setIpCardEnabled(false);
+      }
+    })();
+  }, []);
+
   const revealRef = useReveal<HTMLDivElement>();
 
   return (
@@ -553,7 +580,7 @@ export function Dashboard() {
             <Uptime />
           </div>
         )}
-        <OutboundIpInline refreshSignal={ipNonce} />
+        <OutboundIpInline refreshSignal={ipNonce} enabled={ipCardEnabled} />
         {/* Mode card pushed to the far right so the widened IP card and the
             status/uptime cards get room to breathe on the left. */}
         <div style={{ marginLeft: "auto", display: "flex" }}>
