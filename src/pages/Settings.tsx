@@ -469,7 +469,9 @@ export function Settings() {
     } catch {
       /* noop */
     }
-    setCoreMsg({ type: "info", text: t("settings.downloadCanceled") });
+    // Discarding a *download* never touched the live core — say so plainly
+    // rather than "update canceled" (no update was ever applied). (round-9 A)
+    setCoreMsg({ type: "info", text: t("settings.downloadDiscarded") });
   };
 
   const handleClearCache = async () => {
@@ -566,7 +568,8 @@ export function Settings() {
     } catch {
       /* noop */
     }
-    setAppMsg({ type: "info", text: t("settings.downloadCanceled") });
+    // Discarding a staged download (never applied) — not "update canceled".
+    setAppMsg({ type: "info", text: t("settings.downloadDiscarded") });
   };
 
   // Start an app rollback to the previous version. Installed builds re-download
