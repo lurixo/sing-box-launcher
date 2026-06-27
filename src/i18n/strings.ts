@@ -2,6 +2,7 @@ import { useAppStore } from "../stores/appStore";
 
 export const en = {
   "nav.dashboard": "Dashboard",
+  "nav.config": "Config",
   "nav.connections": "Connections",
   "nav.logs": "Logs",
   "nav.settings": "Settings",
@@ -199,6 +200,7 @@ export type TranslationKey = keyof typeof en;
 
 export const zhCN: Record<TranslationKey, string> = {
   "nav.dashboard": "仪表盘",
+  "nav.config": "配置",
   "nav.connections": "连接",
   "nav.logs": "日志",
   "nav.settings": "设置",

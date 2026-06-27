@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
+import { Config } from "./pages/Config";
 import { Connections } from "./pages/Connections";
 import { Logs } from "./pages/Logs";
 import { Settings } from "./pages/Settings";
@@ -87,6 +88,7 @@ export function App() {
 
         <main style={{ flex: 1, overflow: "auto" }}>
           {page === "dashboard" && <Dashboard />}
+          {page === "config" && <Config />}
           {page === "connections" && <Connections />}
           {page === "logs" && <Logs />}
           {page === "settings" && <Settings />}

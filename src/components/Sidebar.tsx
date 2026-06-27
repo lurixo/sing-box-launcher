@@ -1,5 +1,6 @@
 import {
   BoardRegular,
+  DocumentRegular,
   PlugConnectedRegular,
   TextBulletListSquareRegular,
   SettingsRegular,
@@ -11,6 +12,7 @@ import type { Page } from "../types";
 
 const navItems: { id: Page; icon: React.ReactNode; key: TranslationKey }[] = [
   { id: "dashboard", icon: <BoardRegular />, key: "nav.dashboard" },
+  { id: "config", icon: <DocumentRegular />, key: "nav.config" },
   { id: "connections", icon: <PlugConnectedRegular />, key: "nav.connections" },
   { id: "logs", icon: <TextBulletListSquareRegular />, key: "nav.logs" },
   { id: "settings", icon: <SettingsRegular />, key: "nav.settings" },
