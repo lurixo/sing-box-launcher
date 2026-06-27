@@ -885,6 +885,53 @@ pub async fn get_core_info(
     })
 }
 
+/// Run `sing-box.exe version` and return just the meaningful build info: the
+/// version line and the comma-separated build `Tags:` (the features the kernel
+/// was compiled with), dropping the Environment / Revision / CGO lines
+/// (round-9 J). Falls back to the raw first line if the format is unexpected.
+#[tauri::command]
+pub async fn get_core_version(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+) -> Result<String, AppError> {
+    let base_dir = mgr.lock().await.base_dir.clone();
+    let exe = base_dir.join(CORE_FILE);
+    if !exe.exists() {
+        return Err(AppError::Update("sing-box.exe not found".into()));
+    }
+    let raw = run_version(&exe)?;
+    let kept: Vec<&str> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter(|l| l.starts_with("sing-box version") || l.starts_with("Tags:"))
+        .collect();
+    if kept.is_empty() {
+        return Ok(raw.lines().next().unwrap_or("").trim().to_string());
+    }
+    Ok(kept.join("\n"))
+}
+
+#[cfg(target_os = "windows")]
+fn run_version(exe: &Path) -> Result<String, AppError> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let out = std::process::Command::new(exe)
+        .arg("version")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| AppError::Update(format!("run sing-box version: {e}")))?;
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_version(exe: &Path) -> Result<String, AppError> {
+    let out = std::process::Command::new(exe)
+        .arg("version")
+        .output()
+        .map_err(|e| AppError::Update(format!("run sing-box version: {e}")))?;
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CoreUpdateCheck {
     /// The selected source the check ran against.

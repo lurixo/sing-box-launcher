@@ -147,6 +147,9 @@ export function Settings() {
   const [downloadPrompt, setDownloadPrompt] = useState<{ version: string } | null>(null);
   // Toggles the installed build's release tag inline.
   const [showTag, setShowTag] = useState(false);
+  // Build tags from `sing-box version` (the compiled-in features), fetched lazily
+  // when the user opens the build-tag view (round-9 J).
+  const [buildTag, setBuildTag] = useState<string | null>(null);
   // Live byte progress of an in-flight core download (for the progress bar).
   const [dlProgress, setDlProgress] = useState<{ received: number; total: number | null } | null>(null);
   const [coreMsg, setCoreMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
@@ -382,10 +385,14 @@ export function Settings() {
     try {
       const c = await invoke<CoreUpdateCheck>("check_core_update");
       setCoreCheck(c);
+      // Always report which source/branch was checked and the latest version
+      // available there (round-9 K), not just "up to date".
+      const info = `${sourceLabel(c.source)}${c.channel ? ` · ${c.channel}` : ""} · ${c.latest_tag || c.latest_version}`;
       if (c.update_available) {
+        setCoreMsg({ type: "info", text: t("settings.updateAvailableAt", { info }) });
         setDownloadPrompt({ version: c.latest_version });
       } else {
-        setCoreMsg({ type: "ok", text: t("settings.upToDate") });
+        setCoreMsg({ type: "ok", text: t("settings.upToDateAt", { info }) });
       }
     } catch (e) {
       setCoreMsg({ type: "err", text: String(e) });
@@ -638,11 +645,21 @@ export function Settings() {
       (channelApplies && installedChannel !== kernelChannel));
 
   const copyBuildTag = () => {
-    const tag = coreInfo?.tag;
-    if (!tag) return;
-    navigator.clipboard?.writeText(tag)
+    if (!buildTag) return;
+    navigator.clipboard?.writeText(buildTag)
       .then(() => setCoreMsg({ type: "ok", text: t("settings.buildTagCopied") }))
       .catch(() => {});
+  };
+
+  // Open/close the build-tag view; on open, run `sing-box version` to fetch the
+  // filtered build tags.
+  const toggleBuildTag = () => {
+    const next = !showTag;
+    setShowTag(next);
+    if (next) {
+      setBuildTag(null);
+      invoke<string>("get_core_version").then(setBuildTag).catch(() => setBuildTag(null));
+    }
   };
 
   return (
@@ -1014,15 +1031,15 @@ export function Settings() {
                 : t("settings.coreNotInstalled")}
             </div>
             {showTag && (
-              <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span>{t("settings.viewBuildTag")}:</span>
-                {coreInfo?.tag ? (
+              <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4, display: "flex", alignItems: "flex-start", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ flexShrink: 0 }}>{t("settings.viewBuildTag")}:</span>
+                {buildTag ? (
                   <code
                     onClick={copyBuildTag}
                     title={t("settings.buildTagCopied")}
-                    style={{ cursor: "pointer", userSelect: "text", WebkitUserSelect: "text", color: "var(--text-secondary)" }}
+                    style={{ cursor: "pointer", userSelect: "text", WebkitUserSelect: "text", color: "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
                   >
-                    {coreInfo.tag}
+                    {buildTag}
                   </code>
                 ) : (
                   <span>{t("settings.buildTagNone")}</span>
@@ -1041,7 +1058,7 @@ export function Settings() {
             </button>
             <button
               className={`fluent-btn reveal-target ${showTag ? "accent" : ""}`}
-              onClick={() => setShowTag((v) => !v)}
+              onClick={toggleBuildTag}
               disabled={!coreInfo?.present}
               style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
             >
@@ -1368,6 +1385,11 @@ export function Settings() {
             <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
               {t("settings.downloadPromptBody", { version: downloadPrompt.version })}
             </div>
+            {coreCheck && (
+              <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+                {`${sourceLabel(coreCheck.source)}${coreCheck.channel ? ` · ${coreCheck.channel}` : ""} · ${coreCheck.latest_tag || coreCheck.latest_version}`}
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
               <button
                 className="fluent-btn reveal-target"

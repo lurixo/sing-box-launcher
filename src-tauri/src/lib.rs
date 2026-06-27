@@ -800,6 +800,7 @@ pub fn run() {
             logbus::export_logs,
             proxy::enable_uwp_loopback,
             core_update::get_core_info,
+            core_update::get_core_version,
             core_update::check_core_update,
             core_update::get_staged_kernel,
             core_update::get_kernel_rollback,
