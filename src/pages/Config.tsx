@@ -11,6 +11,7 @@ import {
   DocumentCheckmarkRegular,
   TextWrapRegular,
   CopyRegular,
+  RenameRegular,
 } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { useReveal } from "../hooks/useReveal";
@@ -69,6 +70,14 @@ export function Config() {
   useEffect(() => {
     loadConfigList();
   }, [loadConfigList]);
+
+  // Auto-expire success toasts so a "set active" confirmation doesn't linger
+  // stale after the user has moved on (e.g. switched config + restarted).
+  useEffect(() => {
+    if (configMsg?.type !== "ok") return;
+    const id = setTimeout(() => setConfigMsg(null), 3000);
+    return () => clearTimeout(id);
+  }, [configMsg]);
 
   const activateIfFirst = useCallback(async (name: string): Promise<boolean> => {
     try {
@@ -425,7 +434,8 @@ export function Config() {
                     background: c.active ? "var(--bg-selected)" : "var(--bg-card)",
                     cursor: "pointer", transition: "background 0.1s",
                   }}
-                  onClick={() => openEditor(c.name)}
+                  onClick={() => { if (!c.active) handleSetActive(c.name); }}
+                  title={c.active ? undefined : t("dashboard.setActive")}
                   onMouseEnter={(e) => { if (!c.active) e.currentTarget.style.background = "var(--bg-card-hover)"; }}
                   onMouseLeave={(e) => { if (!c.active) e.currentTarget.style.background = "var(--bg-card)"; }}
                 >
@@ -462,6 +472,14 @@ export function Config() {
                   <div style={{ display: "flex", gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                     <button
                       className="fluent-btn reveal-target"
+                      onClick={() => openEditor(c.name)}
+                      style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px" }}
+                      title={t("config.editConfig")}
+                    >
+                      <EditRegular style={{ fontSize: 13 }} />
+                    </button>
+                    <button
+                      className="fluent-btn reveal-target"
                       onClick={() => handleDuplicate(c.name)}
                       style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px" }}
                       title={t("config.duplicate")}
@@ -474,27 +492,17 @@ export function Config() {
                       style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px" }}
                       title={t("common.rename")}
                     >
-                      <EditRegular style={{ fontSize: 13 }} />
+                      <RenameRegular style={{ fontSize: 13 }} />
                     </button>
                     {!c.active && (
-                      <>
-                        <button
-                          className="fluent-btn reveal-target"
-                          onClick={() => handleSetActive(c.name)}
-                          style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px" }}
-                          title={t("dashboard.setActive")}
-                        >
-                          <CheckmarkCircleRegular style={{ fontSize: 13 }} />
-                        </button>
-                        <button
-                          className="fluent-btn reveal-target"
-                          onClick={() => handleDelete(c.name)}
-                          style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px", color: "var(--status-danger)" }}
-                          title={t("common.delete")}
-                        >
-                          <DeleteRegular style={{ fontSize: 13 }} />
-                        </button>
-                      </>
+                      <button
+                        className="fluent-btn reveal-target"
+                        onClick={() => handleDelete(c.name)}
+                        style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px", color: "var(--status-danger)" }}
+                        title={t("common.delete")}
+                      >
+                        <DeleteRegular style={{ fontSize: 13 }} />
+                      </button>
                     )}
                   </div>
                 </div>
