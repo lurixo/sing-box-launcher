@@ -187,6 +187,31 @@ export function Logs() {
   // Copy every currently-visible line (respects the source tab + level filter).
   const handleCopyAll = () => copyText(visible.map(fmtLine).join("\n"));
 
+  // Drag-to-select linkage: after a text selection is made inside the log body,
+  // tick the export checkbox of every row the selection touches — so picking
+  // text to copy and picking lines to export are the same gesture. Union into
+  // the existing selection (never clears prior manual picks).
+  const syncSelectionToCheckboxes = () => {
+    const sel = window.getSelection();
+    const container = scrollRef.current;
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !container) return;
+    // Ignore selections that don't live in the log body.
+    if (!container.contains(sel.anchorNode) && !container.contains(sel.focusNode)) return;
+    const add: number[] = [];
+    container.querySelectorAll<HTMLElement>(".log-row[data-seq]").forEach((row) => {
+      if (sel.containsNode(row, true)) {
+        const seq = Number(row.dataset.seq);
+        if (Number.isFinite(seq)) add.push(seq);
+      }
+    });
+    if (!add.length) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const s of add) next.add(s);
+      return next;
+    });
+  };
+
   const tabBtn = (id: "core" | "app", label: string) => (
     <button
       className={`fluent-btn reveal-target ${source === id ? "accent" : ""}`}
@@ -207,80 +232,88 @@ export function Logs() {
         {t("logs.title")}
       </h1>
 
-      {/* Toolbar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 4 }}>
-          {tabBtn("core", t("logs.core"))}
-          {tabBtn("app", t("logs.app"))}
-        </div>
+      {/* Toolbar — two groups: the left controls may wrap among themselves on a
+          narrow window, but the right action group (copy / export / clear) is
+          kept together on one line so entering multi-select mode (which widens
+          the export label) can never push "clear" onto a second row. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "nowrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", gap: 4 }}>
+            {tabBtn("core", t("logs.core"))}
+            {tabBtn("app", t("logs.app"))}
+          </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
-          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("logs.minLevel")}</span>
-          <select
-            value={minLevel}
-            onChange={(e) => changeLevel(e.target.value as Level)}
-            title={t("logs.levelApplyHint")}
-            style={{
-              border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
-              padding: "4px 8px", fontSize: 12, background: "var(--bg-surface)",
-              color: "var(--text-primary)", outline: "none", height: 30, fontFamily: "inherit",
-            }}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("logs.minLevel")}</span>
+            <select
+              value={minLevel}
+              onChange={(e) => changeLevel(e.target.value as Level)}
+              title={t("logs.levelApplyHint")}
+              style={{
+                border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
+                padding: "4px 8px", fontSize: 12, background: "var(--bg-surface)",
+                color: "var(--text-primary)", outline: "none", height: 30, fontFamily: "inherit",
+              }}
+            >
+              {LEVELS.map((l) => (
+                <option key={l} value={l}>{l.toUpperCase()}</option>
+              ))}
+            </select>
+          </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", whiteSpace: "nowrap" }}>
+            <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
+            {t("logs.autoScroll")}
+          </label>
+
+          <label
+            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: visible.length ? "pointer" : "default", opacity: visible.length ? 1 : 0.5, whiteSpace: "nowrap" }}
+            title={t("logs.selectAllHint")}
           >
-            {LEVELS.map((l) => (
-              <option key={l} value={l}>{l.toUpperCase()}</option>
-            ))}
-          </select>
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              disabled={visible.length === 0}
+              onChange={toggleAllVisible}
+            />
+            {t("logs.selectAll")}
+          </label>
+
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginLeft: "auto", whiteSpace: "nowrap" }}>
+            {t("logs.count", { count: visible.length })}
+          </span>
         </div>
 
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer" }}>
-          <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
-          {t("logs.autoScroll")}
-        </label>
-
-        <label
-          style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: visible.length ? "pointer" : "default", opacity: visible.length ? 1 : 0.5 }}
-          title={t("logs.selectAllHint")}
-        >
-          <input
-            type="checkbox"
-            checked={allVisibleSelected}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <button
+            className="fluent-btn reveal-target"
+            onClick={handleCopyAll}
             disabled={visible.length === 0}
-            onChange={toggleAllVisible}
-          />
-          {t("logs.selectAll")}
-        </label>
-
-        <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginLeft: "auto" }}>
-          {t("logs.count", { count: visible.length })}
-        </span>
-        <button
-          className="fluent-btn reveal-target"
-          onClick={handleCopyAll}
-          disabled={visible.length === 0}
-          title={t("logs.copyAllHint")}
-          style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", opacity: visible.length === 0 ? 0.5 : 1 }}
-        >
-          <CopyRegular style={{ fontSize: 14 }} />
-          {t("logs.copyAll")}
-        </button>
-        <button
-          className="fluent-btn reveal-target"
-          onClick={handleExport}
-          disabled={selected.size === 0}
-          title={t("logs.exportHint")}
-          style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", opacity: selected.size === 0 ? 0.5 : 1 }}
-        >
-          <ArrowDownloadRegular style={{ fontSize: 14 }} />
-          {selected.size ? t("logs.exportN", { count: selected.size }) : t("logs.export")}
-        </button>
-        <button
-          className="fluent-btn reveal-target"
-          onClick={handleClear}
-          style={{ fontSize: 12, minHeight: 30, padding: "4px 12px" }}
-        >
-          <DeleteRegular style={{ fontSize: 14 }} />
-          {t("logs.clear")}
-        </button>
+            title={t("logs.copyAllHint")}
+            style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", whiteSpace: "nowrap", opacity: visible.length === 0 ? 0.5 : 1 }}
+          >
+            <CopyRegular style={{ fontSize: 14 }} />
+            {t("logs.copyAll")}
+          </button>
+          <button
+            className="fluent-btn reveal-target"
+            onClick={handleExport}
+            disabled={selected.size === 0}
+            title={t("logs.exportHint")}
+            style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", whiteSpace: "nowrap", opacity: selected.size === 0 ? 0.5 : 1 }}
+          >
+            <ArrowDownloadRegular style={{ fontSize: 14 }} />
+            {selected.size ? t("logs.exportN", { count: selected.size }) : t("logs.export")}
+          </button>
+          <button
+            className="fluent-btn reveal-target"
+            onClick={handleClear}
+            style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", whiteSpace: "nowrap" }}
+          >
+            <DeleteRegular style={{ fontSize: 14 }} />
+            {t("logs.clear")}
+          </button>
+        </div>
       </div>
 
       {exportMsg && (
@@ -299,6 +332,7 @@ export function Logs() {
       <div
         ref={scrollRef}
         className="fluent-card"
+        onMouseUp={syncSelectionToCheckboxes}
         style={{
           flex: 1, minHeight: 0, overflow: "auto", padding: "10px 12px",
           fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
@@ -314,7 +348,7 @@ export function Logs() {
           </div>
         ) : (
           visible.map((l) => (
-            <div key={l.seq} className="log-row" style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", alignItems: "flex-start", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
+            <div key={l.seq} data-seq={l.seq} className="log-row" style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", alignItems: "flex-start", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
               <input
                 type="checkbox"
                 checked={selected.has(l.seq)}
