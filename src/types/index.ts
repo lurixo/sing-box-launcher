@@ -32,9 +32,11 @@ export interface AppSettings {
   startup_delay_secs: number;
   disable_gpu_compositing: boolean;
   kernel_source: KernelSource;
+  kernel_channel: KernelChannel;
 }
 
 export type KernelSource = "lurixo" | "sagernet" | "ref1nd";
+export type KernelChannel = "stable" | "dev";
 
 export interface LogLine {
   source: string;
@@ -95,13 +97,17 @@ export interface CheckResult {
 export interface CoreInfo {
   present: boolean;
   source: KernelSource;
+  channel: string;
   version: string | null;
+  tag: string | null;
 }
 
 export interface CoreUpdateCheck {
   source: KernelSource;
+  channel: string;
   current_version: string | null;
   latest_version: string;
+  latest_tag: string;
   update_available: boolean;
 }
 
