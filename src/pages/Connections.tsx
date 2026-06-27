@@ -23,9 +23,15 @@ export function Connections() {
   const t = useT();
   const revealRef = useReveal<HTMLDivElement>();
   const [conns, setConns] = useState<ConnInfo[]>([]);
+  // Anchor index of an in-progress drag-select, or null when idle. Declared up
+  // here so the poll below can freeze the list while a drag is live (round-9 L4):
+  // a refresh that adds/removes rows mid-drag would shift indices and make the
+  // anchor highlight the wrong range.
+  const dragRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     if (!running) { setConns([]); return; }
+    if (dragRef.current != null) return; // don't reshuffle rows mid drag-select
     try {
       setConns(await invoke<ConnInfo[]>("get_connections"));
     } catch {
@@ -58,7 +64,6 @@ export function Connections() {
   // covered range; on release it copies those rows to the clipboard — same gesture
   // as the log page, no text highlight.
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const dragRef = useRef<number | null>(null); // anchor index, or null when idle
   const [copyMsg, setCopyMsg] = useState<string | null>(null);
   useEffect(() => {
     if (!copyMsg) return;
@@ -67,7 +72,7 @@ export function Connections() {
   }, [copyMsg]);
 
   const rowIdxAt = (target: EventTarget | null): number | null => {
-    const el = (target as HTMLElement | null)?.closest?.(".conn-row[data-idx]") as HTMLElement | null;
+    const el = (target as HTMLElement | null)?.closest?.(".row-reveal[data-idx]") as HTMLElement | null;
     if (!el) return null;
     const i = Number(el.dataset.idx);
     return Number.isFinite(i) ? i : null;
