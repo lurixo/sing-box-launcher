@@ -116,7 +116,7 @@ function OutboundIpInline({ refreshSignal = 0, enabled = null }: { refreshSignal
   const dual = ordered.length > 1; // stacked v4+v6 → shrink both rows to stay compact
 
   return (
-    <div className="fluent-card reveal-target" style={{ padding: "8px 14px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-start", gap: dual ? 2 : 1, flex: 1, minWidth: dual ? 210 : 160 }}>
+    <div className="fluent-card reveal-target" style={{ padding: "8px 14px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-start", gap: dual ? 2 : 1, flex: "1 0 auto", minWidth: dual ? 210 : 160 }}>
       {ordered.map((info) => {
         // ASN + IP share one length-scaled monospace size so the two read as a
         // consistent pair and a long IPv6 still fits; when both families show at
@@ -528,7 +528,9 @@ export function Dashboard() {
           invoke<AppSettings>("get_settings"),
           invoke<CoreInfo>("get_core_info"),
         ]);
-        setIpCardEnabled(!!s.outbound_ip_card && ci.source === "lurixo");
+        // lurixo → on unless the user explicitly turned it off (null follows the
+        // kernel default); any other kernel → always off (round-10 #10).
+        setIpCardEnabled(ci.source === "lurixo" && (s.outbound_ip_card ?? true));
       } catch {
         setIpCardEnabled(false);
       }
@@ -565,7 +567,7 @@ export function Dashboard() {
       <div style={{ display: "flex", alignItems: "stretch", gap: 12, flexWrap: "wrap" }}>
         {/* Fixed minWidth + centered so the status text (运行中 / 代理已启用 / 已停止)
             never resizes the card as the state changes. */}
-        <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, minWidth: 130 }}>
+        <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, minWidth: 130, flexShrink: 0 }}>
           <span
             className={`status-dot ${
               status.running ? (status.proxy_enabled ? "proxy" : "running") : "stopped"
@@ -579,17 +581,17 @@ export function Dashboard() {
         </div>
         {status.running && (
           // Fixed width so the every-second uptime never resizes the card.
-          <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", width: 132 }}>
+          <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", minWidth: 96, flexShrink: 0 }}>
             <Uptime />
           </div>
         )}
-        {/* IP slot: always reserves the middle (flex:1) so the mode card stays
-            pinned right with a normal gap whether or not the IP card is shown;
-            the IP card itself (flex:1, content left) fills this slot when on. */}
-        <div style={{ flex: 1, display: "flex", minWidth: 0 }}>
-          <OutboundIpInline refreshSignal={ipNonce} enabled={ipCardEnabled} />
-        </div>
-        <div style={{ display: "flex" }}>
+        {/* IP card grows to fill the middle when there's room (flex-grow) but
+            NEVER shrinks below its content (flex-shrink:0, basis auto) — so the
+            address can't be clipped by the card's overflow:hidden; on a narrow
+            window the whole card wraps to its own full-width line instead. */}
+        <OutboundIpInline refreshSignal={ipNonce} enabled={ipCardEnabled} />
+        {/* Mode pinned right (marginLeft:auto covers the IP-card-hidden case). */}
+        <div style={{ display: "flex", marginLeft: "auto", flexShrink: 0 }}>
           <ClashModeSelector onModeChanged={bumpIp} />
         </div>
       </div>
