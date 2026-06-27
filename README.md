@@ -26,7 +26,7 @@
 ## Features
 
 **Core & configuration**
-- Start / stop / restart the sing-box process with automatic `clash_api` + `cache_file` injection (your original config is never modified — a `config_runtime.json` is generated).
+- Start / stop / restart the sing-box process with automatic `api` service + `cache_file` injection (your original config is never modified — a `config_runtime.json` is generated). See [The control API](#the-control-api-api-service).
 - Manage multiple named config profiles: create, edit, import, rename, delete, and set the active one.
 - Validate & format config JSON before saving.
 - View and switch **Selector** proxy groups, and test node latency.
@@ -97,6 +97,33 @@ Maestro is **Windows-only** and ships in two editions on the [Releases page](htt
 6. Close the window to send Maestro to the **tray** — the icon color tells you the state (gray / green / blue). Left-click the tray to bring the window back; right-click for quick start/stop/restart.
 
 > **TUN mode:** if your config uses a TUN inbound, enable **Run as administrator** in **Settings → General** (Maestro relaunches with a UAC prompt). Without elevation the core may fail to start the TUN interface.
+
+---
+
+## The control API (`api` service)
+
+Maestro talks to the running core through sing-box's **`api` service** (the upstream control API, declared under `services`). It's the endpoint Maestro uses to read status, traffic, connections, and proxy groups, switch the mode, and so on.
+
+**You don't need to add it — Maestro injects it for you.** When it prepares the runtime config (`config_runtime.json`; your original file is never touched), Maestro adds an `api` service if your config has none:
+
+```jsonc
+"services": [
+  {
+    "type": "api",
+    "tag": "api-in",
+    "listen": "127.0.0.1",
+    "listen_port": 12345,
+    "secret": "",
+    "access_control_allow_private_network": true
+  }
+]
+```
+
+If your config **already** declares an `api` service, Maestro keeps it but hardens it for safety:
+
+- **`listen` is forced to `127.0.0.1`** in the runtime config. A config binding `0.0.0.0`/`::` would otherwise expose the control port to your LAN; Maestro pins it to loopback regardless of what the file says. It keeps your `listen_port` (default `9090`).
+- **`secret`** is the Bearer token guarding the control port. If you leave it empty — or if the config tried to bind non-loopback — Maestro generates a **fresh random secret** for the session (so a shared config can't ship a known secret that lets someone drive your core). A non-empty secret on a loopback bind is kept as-is. Because the port is loopback-only, the secret mainly guards against other local processes.
+- **`access_control_allow_private_network`** is a sing-box option that lets control requests originating from a private/LAN network through (it relaxes the browser private-network/CORS check). Since Maestro pins `listen` to loopback, it has **no practical effect** for Maestro's own use; Maestro neither adds nor removes it.
 
 ---
 
