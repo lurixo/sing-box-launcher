@@ -8,6 +8,7 @@ import {
   BoxRegular,
   ArrowSyncRegular,
   ArrowDownloadRegular,
+  ArrowUndoRegular,
   FolderOpenRegular,
   DeleteRegular,
   TagRegular,
@@ -23,7 +24,7 @@ import { useReveal } from "../hooks/useReveal";
 import { useT, type TranslationKey, type Lang } from "../i18n/strings";
 import type {
   Theme, AppSettings, CoreInfo, CoreUpdateCheck, StagedKernel, KernelSource, KernelChannel,
-  AppInfo, AppUpdateCheck, StagedApp,
+  AppInfo, AppUpdateCheck, StagedApp, RollbackTarget, AppRollback,
 } from "../types";
 
 const KERNEL_SOURCES: { id: KernelSource; label: string }[] = [
@@ -148,15 +149,25 @@ export function Settings() {
   // Live byte progress of an in-flight core download (for the progress bar).
   const [dlProgress, setDlProgress] = useState<{ received: number; total: number | null } | null>(null);
   const [coreMsg, setCoreMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
+  // The retained previous kernel a rollback would restore (null = none kept).
+  const [kernelRollback, setKernelRollback] = useState<RollbackTarget | null>(null);
+  const [showKernelRollbackModal, setShowKernelRollbackModal] = useState(false);
 
   // ─── App self-update state ───────────────────────────────────────
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [appCheck, setAppCheck] = useState<AppUpdateCheck | null>(null);
   const [appBusy, setAppBusy] = useState(false);
   const [stagedApp, setStagedApp] = useState<StagedApp | null>(null);
+  // Whether the staged app download is an INSTALLER (run setup.exe in place) vs
+  // a portable exe swap — drives apply wording + which apply command runs, so the
+  // apply modal no longer depends on a prior check's `appCheck.installed`.
+  const [stagedIsInstaller, setStagedIsInstaller] = useState(false);
   const [appMsg, setAppMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
   // Live byte progress of an in-flight installer download (installed builds).
   const [appDlProgress, setAppDlProgress] = useState<{ received: number; total: number | null } | null>(null);
+  // The previous app version a rollback would restore (null = none available).
+  const [appRollback, setAppRollback] = useState<AppRollback | null>(null);
+  const [showAppRollbackModal, setShowAppRollbackModal] = useState(false);
 
   const loadCoreInfo = useCallback(async () => {
     try {
@@ -164,6 +175,13 @@ export function Settings() {
     } catch (e) {
       setCoreMsg({ type: "err", text: String(e) });
     }
+  }, []);
+
+  // Refresh both rollback targets (kernel + app). Called on mount and after any
+  // update/rollback so the offered "roll back to vX" reflects what's retained.
+  const loadRollback = useCallback(async () => {
+    invoke<RollbackTarget | null>("get_kernel_rollback").then(setKernelRollback).catch(() => {});
+    invoke<AppRollback | null>("get_app_rollback").then(setAppRollback).catch(() => {});
   }, []);
 
   // Load autostart + settings on mount
@@ -257,6 +275,7 @@ export function Settings() {
     invoke<StagedApp | null>("get_staged_app_update")
       .then((s) => { if (s) setStagedApp(s); })
       .catch(() => {});
+    loadRollback();
     const unCore = listen<{ stage: string; message: string; received?: number; total?: number | null }>(
       "core-update-progress",
       (e) => {
@@ -283,7 +302,7 @@ export function Settings() {
       },
     );
     return () => { unCore.then((f) => f()); unApp.then((f) => f()); };
-  }, [loadCoreInfo]);
+  }, [loadCoreInfo, loadRollback]);
 
   // Transient core notices (canceled / pending / up-to-date / applied) clear
   // themselves so they don't pile up next to the persistent controls; errors
@@ -393,6 +412,25 @@ export function Settings() {
       setCoreMsg({ type: "ok", text: t("settings.kernelApplied", { version: s.version }) });
       setCoreCheck(null);
       await loadCoreInfo();
+      await loadRollback();
+    } catch (e) {
+      setCoreMsg({ type: "err", text: String(e) });
+    }
+    setCoreBusy(false);
+  };
+
+  // Roll the kernel back to the retained previous version (offered, not forced):
+  // stops the core, swaps the backup in, relaunches if it had been running.
+  const handleRollbackKernel = async () => {
+    setShowKernelRollbackModal(false);
+    setCoreBusy(true);
+    setCoreMsg({ type: "info", text: t("settings.applying") });
+    try {
+      await invoke("rollback_kernel");
+      setCoreCheck(null);
+      await loadCoreInfo();
+      await loadRollback();
+      setCoreMsg({ type: "ok", text: t("settings.kernelRolledBack") });
     } catch (e) {
       setCoreMsg({ type: "err", text: String(e) });
     }
@@ -458,6 +496,7 @@ export function Settings() {
     setAppMsg(null);
     try {
       const s = await invoke<StagedApp>("download_app_update");
+      setStagedIsInstaller(false);
       setStagedApp(s);
     } catch (e) {
       setAppMsg({ type: "err", text: String(e) });
@@ -474,6 +513,7 @@ export function Settings() {
     setAppDlProgress(null);
     try {
       const s = await invoke<StagedApp>("download_installer_update");
+      setStagedIsInstaller(true);
       setStagedApp(s);
     } catch (e) {
       setAppMsg({ type: "err", text: String(e) });
@@ -495,7 +535,7 @@ export function Settings() {
   // build, run the staged installer in passive mode. Either way the app exits as
   // part of this call (the new version is brought back up), so we just fire it.
   const handleApplyApp = async () => {
-    const installed = !!appCheck?.installed;
+    const installed = stagedIsInstaller;
     setStagedApp(null);
     setAppMsg({
       type: "info",
@@ -516,6 +556,41 @@ export function Settings() {
       /* noop */
     }
     setAppMsg({ type: "info", text: t("settings.downloadCanceled") });
+  };
+
+  // Start an app rollback to the previous version. Installed builds re-download
+  // the previous release's verified setup.exe (then the apply modal runs it in
+  // place); portable builds swap the retained `.prev` exe after a confirm.
+  const handleStartAppRollback = async () => {
+    if (!appRollback) return;
+    if (!appRollback.installed) {
+      setShowAppRollbackModal(true);
+      return;
+    }
+    setAppBusy(true);
+    setAppMsg(null);
+    setAppDlProgress(null);
+    try {
+      const s = await invoke<StagedApp>("download_installer_rollback");
+      setStagedIsInstaller(true);
+      setStagedApp(s);
+    } catch (e) {
+      setAppMsg({ type: "err", text: String(e) });
+    }
+    setAppDlProgress(null);
+    setAppBusy(false);
+  };
+
+  // Portable rollback confirmed: swap the retained `.prev` exe back in and
+  // relaunch. The app exits as part of this call, so we just fire it.
+  const handleRollbackAppPortable = async () => {
+    setShowAppRollbackModal(false);
+    setAppMsg({ type: "info", text: t("settings.appRollingBack") });
+    try {
+      await invoke("rollback_app");
+    } catch (e) {
+      setAppMsg({ type: "err", text: String(e) });
+    }
   };
 
   const handleUwpLoopback = async () => {
@@ -1000,6 +1075,27 @@ export function Settings() {
           </button>
         </div>
 
+        {/* Roll back to the retained previous kernel (offered, not forced). */}
+        {kernelRollback && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderTop: "1px solid var(--border-divider)" }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{t("settings.kernelRollback")}</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+                {t("settings.kernelRollbackDesc", { version: `${sourceLabel(kernelRollback.source)} ${kernelRollback.version}` })}
+              </div>
+            </div>
+            <button
+              className="fluent-btn reveal-target"
+              onClick={() => setShowKernelRollbackModal(true)}
+              disabled={coreBusy}
+              style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+            >
+              <ArrowUndoRegular style={{ fontSize: 14 }} />
+              {t("settings.rollback")}
+            </button>
+          </div>
+        )}
+
         {/* Live download progress bar (byte counts streamed from the backend). */}
         {dlProgress && (
           <div style={{ marginTop: 10 }}>
@@ -1197,6 +1293,33 @@ export function Settings() {
             {appMsg.text}
           </div>
         )}
+
+        {/* Roll Maestro back to the previous version (offered, not forced).
+            Installed builds re-download the previous setup.exe; portable builds
+            swap the retained `.prev` exe. */}
+        {appRollback && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0 4px", marginTop: 6, borderTop: "1px solid var(--border-divider)" }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{t("settings.appRollback")}</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+                {t("settings.appRollbackDesc", { version: appRollback.version })}
+              </div>
+            </div>
+            <button
+              className="fluent-btn reveal-target"
+              onClick={handleStartAppRollback}
+              disabled={appBusy}
+              style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+            >
+              {appBusy ? (
+                <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} />
+              ) : (
+                <ArrowUndoRegular style={{ fontSize: 14 }} />
+              )}
+              {t("settings.rollback")}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Download-confirm: a check that finds an update asks before downloading
@@ -1300,7 +1423,7 @@ export function Settings() {
               {t("settings.appUpdateApplyTitle")}
             </div>
             <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              {appCheck?.installed
+              {stagedIsInstaller
                 ? t("settings.appUpdateApplyInstallerBody", { version: stagedApp.version })
                 : t("settings.appUpdateApplyBody", { version: stagedApp.version })}
             </div>
@@ -1317,9 +1440,84 @@ export function Settings() {
                 onClick={handleApplyApp}
                 style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
               >
-                {appCheck?.installed
+                {stagedIsInstaller
                   ? t("settings.appUpdateApplyInstallerConfirm")
                   : t("settings.appUpdateApplyConfirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kernel rollback confirm: swaps the retained previous core back in and
+          restarts the core if it had been running (offered, never forced). */}
+      {showKernelRollbackModal && kernelRollback && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1001,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div className="fluent-card" style={{ width: 380, padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+              {t("settings.kernelRollbackTitle")}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              {t("settings.kernelRollbackBody", { version: `${sourceLabel(kernelRollback.source)} ${kernelRollback.version}` })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button
+                className="fluent-btn reveal-target"
+                onClick={() => setShowKernelRollbackModal(false)}
+                style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
+              >
+                {t("settings.applyKernelCancel")}
+              </button>
+              <button
+                className="fluent-btn accent reveal-target"
+                onClick={handleRollbackKernel}
+                style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
+              >
+                {t("settings.rollback")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Portable app rollback confirm: swaps the retained previous exe back in
+          and relaunches Maestro. Installed builds use the staged-installer modal
+          instead (re-download + run setup.exe), so this is portable-only. */}
+      {showAppRollbackModal && appRollback && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1001,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div className="fluent-card" style={{ width: 360, padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+              {t("settings.appRollbackTitle")}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              {t("settings.appRollbackBody", { version: appRollback.version })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button
+                className="fluent-btn reveal-target"
+                onClick={() => setShowAppRollbackModal(false)}
+                style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
+              >
+                {t("settings.applyKernelCancel")}
+              </button>
+              <button
+                className="fluent-btn accent reveal-target"
+                onClick={handleRollbackAppPortable}
+                style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
+              >
+                {t("settings.rollback")}
               </button>
             </div>
           </div>

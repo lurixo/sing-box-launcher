@@ -116,6 +116,13 @@ export interface StagedKernel {
   version: string;
 }
 
+export interface RollbackTarget {
+  source: KernelSource;
+  version: string;
+  channel: string;
+  tag: string;
+}
+
 export interface AppInfo {
   version: string;
   built_at: string;
@@ -132,6 +139,12 @@ export interface AppUpdateCheck {
 export interface StagedApp {
   version: string;
   built_at: string;
+}
+
+export interface AppRollback {
+  version: string;
+  built_at: string;
+  installed: boolean;
 }
 
 export type DelayMap = Record<string, number>;

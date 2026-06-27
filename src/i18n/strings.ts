@@ -225,6 +225,17 @@ export const en = {
   "settings.appUpdateApplyInstallerConfirm": "Close & update",
   "settings.appUpdateInstalling": "Running installer — Maestro will close and reopen…",
   "settings.appUpdateOpenReleasesFallback": "Open releases page",
+  "settings.rollback": "Roll back",
+  "settings.kernelRollback": "Roll back kernel",
+  "settings.kernelRollbackDesc": "Restore the previous kernel ({version}).",
+  "settings.kernelRollbackTitle": "Roll back the kernel?",
+  "settings.kernelRollbackBody": "Switch back to {version}. The core will restart if it is currently running.",
+  "settings.kernelRolledBack": "Kernel rolled back.",
+  "settings.appRollback": "Roll back Maestro",
+  "settings.appRollbackDesc": "Restore the previous version ({version}).",
+  "settings.appRollbackTitle": "Roll back Maestro?",
+  "settings.appRollbackBody": "Roll back to {version}. Maestro will close and reopen on the previous version.",
+  "settings.appRollingBack": "Rolling back — Maestro will restart…",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -454,6 +465,17 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.appUpdateApplyInstallerConfirm": "关闭并更新",
   "settings.appUpdateInstalling": "正在运行安装器,Maestro 即将关闭并重新打开…",
   "settings.appUpdateOpenReleasesFallback": "打开发布页",
+  "settings.rollback": "回滚",
+  "settings.kernelRollback": "回滚内核",
+  "settings.kernelRollbackDesc": "恢复上一版内核({version})。",
+  "settings.kernelRollbackTitle": "回滚内核?",
+  "settings.kernelRollbackBody": "切换回 {version}。若内核正在运行将会重启。",
+  "settings.kernelRolledBack": "内核已回滚。",
+  "settings.appRollback": "回滚 Maestro",
+  "settings.appRollbackDesc": "恢复上一版({version})。",
+  "settings.appRollbackTitle": "回滚 Maestro?",
+  "settings.appRollbackBody": "回滚到 {version}。Maestro 将关闭并以上一版重新打开。",
+  "settings.appRollingBack": "正在回滚,Maestro 即将重启…",
 };
 
 export const dictionaries = { en, "zh-CN": zhCN } as const;
