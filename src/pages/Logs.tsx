@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownloadRegular, DeleteRegular } from "@fluentui/react-icons";
+import { ArrowDownloadRegular, CopyRegular, DeleteRegular } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -174,6 +174,19 @@ export function Logs() {
     }
   };
 
+  // One log line as plain text for the clipboard / per-line copy.
+  const fmtLine = (l: LogLine) => `${fmtTime(l.ts)} [${l.level.toUpperCase()}] ${l.message}`;
+
+  const copyText = (text: string) => {
+    if (!text) return;
+    navigator.clipboard?.writeText(text)
+      .then(() => setExportMsg({ ok: true, text: t("logs.copied") }))
+      .catch(() => setExportMsg({ ok: false, text: t("logs.copyFailed") }));
+  };
+
+  // Copy every currently-visible line (respects the source tab + level filter).
+  const handleCopyAll = () => copyText(visible.map(fmtLine).join("\n"));
+
   const tabBtn = (id: "core" | "app", label: string) => (
     <button
       className={`fluent-btn reveal-target ${source === id ? "accent" : ""}`}
@@ -242,6 +255,16 @@ export function Logs() {
         </span>
         <button
           className="fluent-btn reveal-target"
+          onClick={handleCopyAll}
+          disabled={visible.length === 0}
+          title={t("logs.copyAllHint")}
+          style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", opacity: visible.length === 0 ? 0.5 : 1 }}
+        >
+          <CopyRegular style={{ fontSize: 14 }} />
+          {t("logs.copyAll")}
+        </button>
+        <button
+          className="fluent-btn reveal-target"
           onClick={handleExport}
           disabled={selected.size === 0}
           title={t("logs.exportHint")}
@@ -280,6 +303,9 @@ export function Logs() {
           flex: 1, minHeight: 0, overflow: "auto", padding: "10px 12px",
           fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
           fontSize: 12, lineHeight: 1.55, background: "var(--bg-surface)",
+          // Allow click-drag text selection in the log body (the app disables
+          // user-select globally); the toolbar/checkboxes stay unaffected.
+          userSelect: "text", WebkitUserSelect: "text", cursor: "text",
         }}
       >
         {visible.length === 0 ? (
@@ -288,7 +314,7 @@ export function Logs() {
           </div>
         ) : (
           visible.map((l) => (
-            <div key={l.seq} style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
+            <div key={l.seq} className="log-row" style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", alignItems: "flex-start", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
               <input
                 type="checkbox"
                 checked={selected.has(l.seq)}
@@ -303,6 +329,14 @@ export function Logs() {
                 {l.level}
               </span>
               <span style={{ color: "var(--text-primary)", flex: 1 }}>{l.message}</span>
+              <button
+                className="log-copy"
+                onClick={() => copyText(fmtLine(l))}
+                title={t("logs.copyLine")}
+                aria-label={t("logs.copyLine")}
+              >
+                <CopyRegular style={{ fontSize: 13 }} />
+              </button>
             </div>
           ))
         )}

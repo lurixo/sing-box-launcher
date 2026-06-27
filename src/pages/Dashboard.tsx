@@ -111,7 +111,7 @@ function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
   if (!running || lines.length === 0) return null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+    <div className="fluent-card reveal-target" style={{ padding: "8px 14px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 1, minWidth: 0 }}>
       {lines.map((info) => {
         // ASN + IP share one length-scaled monospace size so the two read as a
         // consistent pair and a long IPv6 still fits.
@@ -199,6 +199,7 @@ const TrafficChart = memo(function TrafficChart({ samples, max }: { samples: { u
 
 function ClashModeSelector({ onModeChanged }: { onModeChanged?: () => void }) {
   const running = useAppStore((s) => s.status.running);
+  const t = useT();
   const [info, setInfo] = useState<ClashModeInfo | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -246,9 +247,12 @@ function ClashModeSelector({ onModeChanged }: { onModeChanged?: () => void }) {
 
   if (!running || !info || info.modes.length === 0) return null;
 
-  // Show the core's raw mode values verbatim — no translation, no extra label.
+  // A "Mode" label precedes the segmented control; the mode VALUES stay verbatim
+  // (the core's own strings — no translation). Lives in its own small reveal card.
   return (
-    <div style={{ display: "inline-flex", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
+    <div className="fluent-card reveal-target" style={{ padding: "8px 14px", display: "inline-flex", alignItems: "center", gap: 10 }}>
+      <span style={{ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("dashboard.mode")}</span>
+      <div style={{ display: "inline-flex", border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
       {info.modes.map((mode, i) => {
         const active = mode.toLowerCase() === info.current.toLowerCase();
         return (
@@ -269,6 +273,7 @@ function ClashModeSelector({ onModeChanged }: { onModeChanged?: () => void }) {
           </button>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -281,6 +286,7 @@ function StatTile({ icon, label, value, accent, onClick, upcase = true }: { icon
       tabIndex={onClick ? 0 : undefined}
       title={onClick ? label : undefined}
       onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      className="reveal-target"
       style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", borderRadius: "var(--radius-sm)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4, minWidth: 0, cursor: onClick ? "pointer" : undefined }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", fontSize: 11, textTransform: upcase ? "uppercase" : "none", letterSpacing: "0.03em" }}>
         <span style={{ display: "flex", color: accent || "var(--text-tertiary)" }}>{icon}</span>
@@ -355,7 +361,7 @@ const MetricsOverview = memo(function MetricsOverview() {
   const dash = (v: string) => (running ? v : "—");
 
   return (
-    <div className="fluent-card reveal-target" style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+    <div className="fluent-card" style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
       <div className="card-header" style={{ marginBottom: 0 }}>{t("dashboard.overview")}</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
         <StatTile icon={<ArrowUpRegular style={{ fontSize: 14 }} />} label={t("dashboard.upSpeed")} value={dash(formatSpeed(last.up))} accent="var(--status-success)" />
@@ -719,25 +725,28 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* Status + uptime + clash mode */}
-      <div className="fluent-card reveal-target" style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {/* Status row — a set of small reveal cards rather than one big card, so
+          the highlight only lights the card under the cursor. */}
+      <div style={{ display: "flex", alignItems: "stretch", gap: 12, flexWrap: "wrap" }}>
+        <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 8 }}>
           <span
             className={`status-dot ${
               status.running ? (status.proxy_enabled ? "proxy" : "running") : "stopped"
             }`}
           />
-          <span style={{ fontSize: 16, fontWeight: 600 }}>
+          <span style={{ fontSize: 15, fontWeight: 600, whiteSpace: "nowrap" }}>
             {status.running
               ? status.proxy_enabled ? t("dashboard.status.proxyActive") : t("dashboard.status.running")
               : t("dashboard.status.stopped")}
           </span>
         </div>
-        <Uptime />
+        {status.running && (
+          <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center" }}>
+            <Uptime />
+          </div>
+        )}
         <OutboundIpInline refreshSignal={ipNonce} />
-        <div style={{ marginLeft: "auto" }}>
-          <ClashModeSelector onModeChanged={bumpIp} />
-        </div>
+        <ClashModeSelector onModeChanged={bumpIp} />
       </div>
 
       {/* Controls */}
@@ -1049,8 +1058,8 @@ export function Dashboard() {
           padding: "4px 0", borderTop: "1px solid var(--border-divider)", paddingTop: 12,
         }}
       >
-        <span>{t("dashboard.proxyLabel")} <code style={{ color: "var(--text-primary)" }}>{status.proxy_server || "—"}</code></span>
-        <span>{t("dashboard.apiLabel")} <code style={{ color: "var(--text-primary)" }}>{status.api_address || "—"}</code></span>
+        <span>{t("dashboard.proxyLabel")} <code style={{ color: "var(--text-primary)" }}>{status.proxy_server}</code></span>
+        <span>{t("dashboard.apiLabel")} <code style={{ color: "var(--text-primary)" }}>{status.api_address}</code></span>
       </div>
     </div>
   );

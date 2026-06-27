@@ -56,6 +56,7 @@ function ToggleSwitch({
 }) {
   return (
     <button
+      className="reveal-target"
       onClick={() => !disabled && onChange(!checked)}
       disabled={disabled}
       style={{
