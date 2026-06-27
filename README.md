@@ -14,7 +14,7 @@
 
 - 🎛️ **One-click core control** — start, stop, and restart sing-box with automatic config injection; live status, uptime, and outbound IP at a glance.
 - 🔀 **Switchable kernel sources** — ship-bundled **lurixo** by default, or pull builds on demand from **SagerNet** or **reF1nd**, all from inside the app.
-- ⬆️ **Self-updating** — the portable build updates itself (timestamp-based, SHA-256 verified, restart-and-swap); the kernel updates independently, on your confirmation.
+- ⬆️ **Self-updating & reversible** — both editions update in-app (the portable build swaps its own exe; the installer build downloads and runs a fresh `setup.exe`), SHA-256 verified, on your confirmation; the kernel updates independently. Every update — app **or** kernel — can be **rolled back** to the previous version.
 - 📈 **Live traffic overview** — upload and download on a single shared-axis chart, plus connection count, memory (Maestro + core), and cumulative totals.
 - 🪵 **Privacy-first logs** — kept in memory only, **never written to disk**; export just the lines you pick (redacted), with a one-shot sanitized crash dump only if something actually crashes.
 - 🌐 **System proxy in one click** — toggle the Windows system proxy via the registry; clear warning when a config is TUN-only.
@@ -37,9 +37,9 @@
 - Check, download, and apply core updates in-app — the running core keeps serving traffic during the download, and only restarts after you confirm.
 - **Clear cache** to remove `cache.db` and leftover downloaded cores (the in-use core is kept).
 
-**App self-update** *(portable edition)*
-- Maestro checks for a newer release and, on your confirmation, swaps its own executable and relaunches — updating only the app, never your kernel, settings, or configs.
-- Installed (setup.exe) builds intentionally don't self-update; they point you to the latest installer instead.
+**App self-update & rollback**
+- Maestro checks for a newer release and updates on your confirmation: the **portable** edition swaps its own executable and relaunches (only the app binary changes — never your kernel, settings, or configs); the **installer** edition downloads a fresh, SHA-256-verified `setup.exe` and runs it to upgrade in place.
+- **Roll back** to the previous version at any time — the portable edition restores the retained prior executable; the installer edition re-downloads and runs the previous release's verified installer.
 
 **Monitoring**
 - Traffic overview chart combining upload + download on one shared axis, with live speeds, active connection count, memory usage (Maestro + core), and cumulative up/down totals.
@@ -72,7 +72,8 @@ Maestro is **Windows-only** and ships in two editions on the [Releases page](htt
 | File | `maestro-<version>-windows-amd64v3-portable.zip` | `maestro-<version>-windows-amd64v3-setup.exe` |
 | Install | Unzip anywhere and run `Maestro.exe` | Run the NSIS installer (per-user, no admin needed) |
 | Data location | `data/` folder beside the executable | `data/` folder inside the install directory |
-| **Self-update** | ✅ Updates itself in place | ❌ Update by downloading a new installer |
+| **Self-update** | ✅ Swaps its own exe in place | ✅ Downloads & runs a fresh installer in-app |
+| **Rollback** | ✅ Restores the retained prior exe | ✅ Re-runs the previous release's installer |
 | Add/Remove Programs | No entry (just delete the folder) | Registered; uninstallable from Windows |
 
 **Which should I pick?** Use the **portable** edition if you want hassle-free, in-app self-updates and a self-contained folder you can move or delete freely. Use the **installer** if you prefer a traditional, system-registered install — it won't be replaced by the portable self-updater.
@@ -119,16 +120,24 @@ Downloads are pinned to the **exact source repository** and follow redirects onl
 
 Maestro has **two independent update mechanisms**:
 
-### 1. App self-update (portable edition)
-- Maestro learns its own build timestamp from a bundled manifest and checks the newest GitHub release.
-- Updates are decided by **build timestamp** (not version number) and the download is **SHA-256 verified** against the release's published hash.
-- On your confirmation, Maestro swaps its own executable and relaunches automatically. **Only the app binary is replaced** — your kernel, settings, and configs are untouched.
-- **Installed builds don't self-update** by swapping the exe (that would desync the installer's registration); they direct you to download the latest installer instead.
+### 1. App self-update
+Maestro learns its own build timestamp from a bundled manifest and checks the newest GitHub release. Updates are decided by **build timestamp** (not version number). How the update is applied differs by edition:
+
+- **Portable edition** — on your confirmation, Maestro swaps its own executable and relaunches automatically. The download is **SHA-256 verified** against the release's published hash, and **only the app binary is replaced** — your kernel, settings, and configs are untouched.
+- **Installer edition** — Maestro downloads the release's `setup.exe`, **verifies its SHA-256**, and (after one "Maestro will close and update" confirmation) runs it in passive mode: a small progress window, then an automatic relaunch. The NSIS installer upgrades in place and keeps the Add/Remove-Programs registration intact, so an installed build never swaps its own exe.
 
 ### 2. Kernel (sing-box core) update
 - Runs against whichever **kernel source** you've selected (see above).
-- Download is **staged** while the core keeps running, then applied on a **confirmed restart**, with rollback if the swap fails.
+- Download is **staged** while the core keeps running, then applied on a **confirmed restart**.
 - **lurixo** downloads must match a published SHA-256. **SagerNet/reF1nd** publish no upstream checksum, so integrity rests on the repository-pinned HTTPS download plus an in-session re-verification of the staged bytes at apply time.
+
+### 3. Rolling back
+Every update keeps the version it replaced, so you can return to it if a new build misbehaves:
+
+- **Kernel** — the previous core is retained beside the live one and survives later updates **and Clear cache**. "Roll back" stops the core, swaps the previous kernel back in, and restarts it if it was running. The swap is symmetric, so a rollback is itself reversible (you can roll forward again).
+- **App (portable)** — the previous executable is retained; rolling back swaps it back and relaunches.
+- **App (installer)** — Maestro re-downloads the previous release's **SHA-256-verified** `setup.exe` and runs it to reinstall that version in place.
+- Rollback is always **offered, never forced** — you confirm before anything restarts.
 
 ---
 
@@ -139,7 +148,8 @@ Maestro is built to keep your data on your machine:
 - **Logs are kept in memory only and are never written to disk.** View them live on the **Logs** page; the in-app level filter only changes the view (the core still records full detail).
 - **You choose what leaves memory.** Export only the log lines you select to a file of your choosing — the API secret and common credential fields (`password`, `uuid`, `private_key`, `psk`, `secret`, `token`, `auth_str`, `api_secret`) are best-effort redacted first.
 - **One-shot crash dump only.** A single, overwrite-only `crash-dump.txt` is written **only** when Maestro or the core actually crashes (or an unclean prior shutdown is detected at startup). It is redacted with the same rules and carries a banner warning that it may still contain network destinations from your session — review before sharing.
-- **No telemetry or analytics.** Maestro's only outbound requests are update checks and core/app downloads (to GitHub), an optional outbound-IP lookup you trigger, and the local API of your own running core.
+- **No telemetry or analytics.** Maestro's only outbound requests are update checks and core/app downloads (to GitHub), the outbound-IP lookup described below, and the local API of your own running core.
+- **Outbound-IP lookup uses a third-party service.** The Dashboard's outbound-IP card shows your **proxy's exit IP**, country, and network (ASN). To resolve it, Maestro asks your running sing-box core to make a request **through your active proxy** to a third-party IP-geolocation service — so that service sees your proxy's exit IP (not your real address, since the request goes through the proxy). The lookup runs only while the Dashboard is open with the core running. The request is performed by the bundled core (its response format matches **[ip.sb](https://ip.sb/)**'s `geoip` API); the exact endpoint is determined by the bundled sing-box build.
 
 ---
 
