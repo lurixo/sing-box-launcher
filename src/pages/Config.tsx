@@ -10,6 +10,7 @@ import {
   ArrowLeftRegular,
   DocumentCheckmarkRegular,
   TextWrapRegular,
+  CopyRegular,
 } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { useReveal } from "../hooks/useReveal";
@@ -159,6 +160,22 @@ export function Config() {
       await invoke("delete_config", { name });
       if (editingName === name) setEditingName(null);
       await loadConfigList();
+    } catch (e) {
+      setConfigMsg({ type: "err", text: String(e) });
+    }
+  };
+
+  // Duplicate a config: copy its contents into a fresh "<name>-copy[-N]" file.
+  const handleDuplicate = async (name: string) => {
+    try {
+      const content = await invoke<string>("get_config", { name });
+      const taken = new Set(configs.map((c) => c.name));
+      let candidate = `${name}-copy`;
+      let i = 2;
+      while (taken.has(candidate)) candidate = `${name}-copy-${i++}`;
+      await invoke("save_config", { name: candidate, content });
+      await loadConfigList();
+      setConfigMsg({ type: "ok", text: t("config.duplicatedMsg", { name: candidate }) });
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
@@ -443,6 +460,14 @@ export function Config() {
                     </span>
                   )}
                   <div style={{ display: "flex", gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className="fluent-btn reveal-target"
+                      onClick={() => handleDuplicate(c.name)}
+                      style={{ fontSize: 11, minHeight: 30, minWidth: 34, padding: "5px 8px" }}
+                      title={t("config.duplicate")}
+                    >
+                      <CopyRegular style={{ fontSize: 13 }} />
+                    </button>
                     <button
                       className="fluent-btn reveal-target"
                       onClick={() => { setRenamingName(c.name); setRenameInput(c.name); }}
