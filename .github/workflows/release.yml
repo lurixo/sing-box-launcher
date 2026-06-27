@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -26,12 +26,26 @@ jobs:
           workspaces: src-tauri
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      # Single UTC build timestamp, reused for both the bundled build-info and
+      # the published asset so the app's self-knowledge matches the release.
+      - name: Build timestamp
+        id: stamp
+        shell: pwsh
+        run: |
+          $builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          "BUILT_AT=$builtAt" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding ascii
 
       - name: Fetch sing-box core
         shell: pwsh
@@ -52,32 +66,138 @@ jobs:
           if (-not $exe) { throw "sing-box.exe not found in archive" }
           Copy-Item $exe.FullName stage/sing-box.exe
 
-      - name: Build Tauri app (portable, no installer)
-        run: npx tauri build --no-bundle
+      # Stage the kernel + tools + markers into src-tauri/resources/ so the NSIS
+      # bundler (tauri.installer.conf.json) can copy them into the install's
+      # data/ folder. EnableLoopback.exe is already committed there.
+      - name: Stage installer resources
+        shell: pwsh
+        run: |
+          Copy-Item stage/sing-box.exe src-tauri/resources/sing-box.exe -Force
+          Copy-Item stage/singbox-build-info.json src-tauri/resources/singbox-build-info.json -Force
+          # Channel marker: only the installer ships it. Detected at runtime so
+          # an installed build does NOT self-update via the portable exe swap.
+          Set-Content -Path src-tauri/resources/CHANNEL -Value "installer" -Encoding ascii -NoNewline
+          # Bundled build-info gives the installed app its version + built_at.
+          # No sha is needed here (the local sha is never used for self-compare,
+          # which is built_at-only); the published asset below carries the real
+          # portable-exe sha for download verification.
+          $bundled = [ordered]@{
+            version        = "${{ steps.version.outputs.VERSION }}"
+            windows_asset  = "maestro-${{ steps.version.outputs.VERSION }}-windows-amd64v3-portable.zip"
+            windows_sha256 = ""
+            built_at       = "${{ steps.stamp.outputs.BUILT_AT }}"
+            run_id         = "${{ github.run_id }}"
+          }
+          $bundled | ConvertTo-Json | Set-Content -Path src-tauri/resources/maestro-build-info.json -Encoding ascii
+
+      # Sync the bundle version to the release tag so the NSIS installer's
+      # embedded version + Windows Add/Remove-Programs entry + upgrade detection
+      # track the tag (tauri.conf.json is hardcoded at 0.1.0). Surgical string
+      # replace (ascii, no BOM) to avoid reserializing/altering the rest.
+      - name: Set bundle version from tag
+        shell: pwsh
+        run: |
+          $conf = "src-tauri/tauri.conf.json"
+          $raw = Get-Content $conf -Raw
+          $new = $raw -replace '("version":\s*)"[^"]*"', ('$1"' + "${{ steps.version.outputs.VERSION }}" + '"')
+          Set-Content -Path $conf -Value $new -NoNewline -Encoding ascii
+          Write-Host "Patched bundle version -> ${{ steps.version.outputs.VERSION }}"
+          Select-String -Path $conf -Pattern '"version"'
+
+      # One compile (x86-64-v3 via src-tauri/.cargo/config.toml) that also emits
+      # the NSIS installer with the kernel resources bundled. target/release/
+      # Maestro.exe is reused for the portable package below.
+      - name: Build Tauri app + NSIS installer
+        run: npx tauri build --bundles nsis --config src-tauri/tauri.installer.conf.json
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
-      - name: Extract version from tag
-        id: version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+      # Verify the produced binary is x86-64-v3: the rustc cfg gate proves the
+      # flag enables AVX2 (deterministic), and — when dumpbin is available — the
+      # binary itself is checked for AVX2 (ymm) instructions.
+      - name: Verify x86-64-v3 codegen
+        shell: pwsh
+        run: |
+          Write-Host "--- src-tauri/.cargo/config.toml ---"
+          Get-Content src-tauri/.cargo/config.toml
+          $cfg = rustc --print cfg -C target-cpu=x86-64-v3 --target x86_64-pc-windows-msvc
+          if (-not ($cfg | Select-String -Quiet 'target_feature="avx2"')) {
+            throw "x86-64-v3 does not enable avx2 — flag ineffective"
+          }
+          Write-Host "rustc cfg gate OK: target-cpu=x86-64-v3 enables avx2"
+          $exe = "src-tauri/target/release/Maestro.exe"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = $null
+          if (Test-Path $vswhere) {
+            $vs = & $vswhere -latest -property installationPath
+            $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if ($dumpbin) {
+            & $dumpbin.FullName /disasm:nobytes $exe > "$env:RUNNER_TEMP\disasm.txt"
+            $ymm = (Select-String -Path "$env:RUNNER_TEMP\disasm.txt" -Pattern '\bymm\d' -AllMatches | Measure-Object).Count
+            Write-Host "AVX2 (ymm) instruction lines in Maestro.exe: $ymm"
+            if ($ymm -eq 0) { throw "no AVX2 instructions in binary — x86-64-v3 codegen missing" }
+          } else {
+            Write-Host "dumpbin not found; relying on the rustc cfg gate above"
+          }
 
-      - name: Assemble portable package
+      - name: Generate Maestro build info (release asset)
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/release/Maestro.exe"
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          $asset = "maestro-${{ steps.version.outputs.VERSION }}-windows-amd64v3-portable.zip"
+          # The NSIS installer was built earlier (bundle/nsis); hash it so the
+          # installed-build self-update can verify the setup.exe it downloads.
+          $setup = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter *-setup.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          $setupSha = if ($setup) { (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower() } else { "" }
+          $setupAsset = "maestro-${{ steps.version.outputs.VERSION }}-windows-amd64v3-setup.exe"
+          $info = [ordered]@{
+            version              = "${{ steps.version.outputs.VERSION }}"
+            windows_asset        = $asset
+            windows_sha256       = $sha
+            windows_setup_asset  = $setupAsset
+            windows_setup_sha256 = $setupSha
+            built_at             = "${{ steps.stamp.outputs.BUILT_AT }}"
+            run_id               = "${{ github.run_id }}"
+          }
+          # ASCII (no BOM) so serde_json on the client parses it cleanly. Hashes
+          # are over Maestro.exe (portable self-update verifies + swaps it in) and
+          # the *-setup.exe (installed self-update verifies + runs it). Both asset
+          # names MUST equal the published asset names so the updater can find them.
+          $info | ConvertTo-Json | Set-Content -Path stage/maestro-build-info.json -Encoding ascii
+          Write-Host ($info | ConvertTo-Json -Compress)
+
+      - name: Assemble portable package (amd64v3)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path portable | Out-Null
-          Copy-Item src-tauri/target/release/sing-box-launcher.exe portable/
-          Copy-Item stage/sing-box.exe portable/
-          Copy-Item stage/singbox-build-info.json portable/
-          Copy-Item src-tauri/resources/EnableLoopback.exe portable/
-          Compress-Archive -Path portable/* -DestinationPath "sing-box-launcher-${{ steps.version.outputs.VERSION }}-portable.zip" -Force
+          New-Item -ItemType Directory -Force -Path portable/data | Out-Null
+          Copy-Item src-tauri/target/release/Maestro.exe portable/
+          Copy-Item stage/sing-box.exe portable/data/
+          Copy-Item stage/singbox-build-info.json portable/data/
+          Copy-Item stage/maestro-build-info.json portable/data/
+          Copy-Item src-tauri/resources/EnableLoopback.exe portable/data/
+          # No CHANNEL marker in the portable build — it is the self-updating one.
+          Compress-Archive -Path portable/* -DestinationPath "maestro-${{ steps.version.outputs.VERSION }}-windows-amd64v3-portable.zip" -Force
+
+      - name: Collect NSIS installer
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter *-setup.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $setup) { throw "NSIS installer not found under bundle/nsis" }
+          Copy-Item $setup.FullName "maestro-${{ steps.version.outputs.VERSION }}-windows-amd64v3-setup.exe"
+          Write-Host "Installer: $($setup.Name)"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
-          name: "sing-box-launcher v${{ steps.version.outputs.VERSION }}"
+          name: "Maestro v${{ steps.version.outputs.VERSION }}"
           generate_release_notes: true
           files: |
-            sing-box-launcher-*-portable.zip
+            maestro-*-windows-amd64v3-portable.zip
+            maestro-*-windows-amd64v3-setup.exe
+            stage/maestro-build-info.json
           draft: false
-          prerelease: false
+          # A tag with a pre-release suffix (e.g. v1.0.0-rc.1) is marked as such.
+          prerelease: ${{ contains(github.ref_name, '-') }}

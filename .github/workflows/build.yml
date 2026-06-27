@@ -54,20 +54,40 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
+      - name: Generate Maestro build info
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/release/Maestro.exe"
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          $builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $info = [ordered]@{
+            version        = "$ver"
+            windows_asset  = "maestro-windows-amd64v3-portable.zip"
+            windows_sha256 = $sha
+            built_at       = $builtAt
+            run_id         = "${{ github.run_id }}"
+          }
+          # ASCII (no BOM) so serde_json on the client parses it cleanly.
+          $info | ConvertTo-Json | Set-Content -Path stage/maestro-build-info.json -Encoding ascii
+          Write-Host ($info | ConvertTo-Json -Compress)
+
       - name: Assemble portable package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path portable | Out-Null
-          Copy-Item src-tauri/target/release/sing-box-launcher.exe portable/
-          Copy-Item stage/sing-box.exe portable/
-          Copy-Item stage/singbox-build-info.json portable/
-          Copy-Item src-tauri/resources/EnableLoopback.exe portable/
-          Compress-Archive -Path portable/* -DestinationPath sing-box-launcher-portable.zip -Force
+          New-Item -ItemType Directory -Force -Path portable/data | Out-Null
+          Copy-Item src-tauri/target/release/Maestro.exe portable/
+          Copy-Item stage/sing-box.exe portable/data/
+          Copy-Item stage/singbox-build-info.json portable/data/
+          Copy-Item stage/maestro-build-info.json portable/data/
+          Copy-Item src-tauri/resources/EnableLoopback.exe portable/data/
+          Compress-Archive -Path portable/* -DestinationPath maestro-windows-amd64v3-portable.zip -Force
 
       - name: Upload portable artifact
         if: success()
         uses: actions/upload-artifact@v7
         with:
-          name: sing-box-launcher-portable
-          path: sing-box-launcher-portable.zip
+          name: maestro-portable-amd64v3
+          path: maestro-windows-amd64v3-portable.zip
           retention-days: 7

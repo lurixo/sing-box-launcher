@@ -24,7 +24,7 @@ export function TitleBar() {
   return (
     <div className="titlebar">
       <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.02em", color: "var(--text-primary)" }}>
-        sing-box launcher
+        Maestro
       </span>
 
       <div className="titlebar-buttons">
@@ -48,7 +48,7 @@ export function TitleBar() {
         </button>
         <button
           className="titlebar-btn close"
-          onClick={() => appWindow.hide()}
+          onClick={() => appWindow.close()}
           aria-label={t("titlebar.close")}
         >
           <DismissRegular style={{ fontSize: 16 }} />

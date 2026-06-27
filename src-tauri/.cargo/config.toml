@@ -1,0 +1,15 @@
+# Build the Maestro binary (and all of its dependencies) for the x86-64-v3
+# microarchitecture level (AVX2 / BMI2 / FMA), matching the sing-box core we
+# ship (windows-amd64v3). The bundled kernel already requires a v3-capable CPU,
+# so raising the app to the same baseline adds no new hardware requirement on
+# the END USER's machine.
+#
+# Scoped to the Windows MSVC target. Note: CI/Windows dev builds run with no
+# `--target`, i.e. host == target == x86_64-pc-windows-msvc, so cargo applies
+# this flag to ALL units for that triple — INCLUDING build scripts / proc-macros
+# that then execute on the BUILD machine. The build host therefore must be
+# AVX2-capable (every supported GitHub windows runner is; AVX2 is ~universal on
+# x86-64 since 2013). The cross x86_64-pc-windows-gnu self-check uses a different
+# `--target`, which splits host/target, so its host units keep baseline codegen.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

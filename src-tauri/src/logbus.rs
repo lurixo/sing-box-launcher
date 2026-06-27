@@ -1,8 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+
+use crate::error::AppError;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
@@ -100,11 +102,74 @@ pub fn clear_logs(bus: tauri::State<'_, LogBus>) {
     bus.clear();
 }
 
+/// Export the chosen log lines (by `seq`) from the in-memory buffer to a
+/// user-picked file as plain text. The path comes from the frontend save
+/// dialog; lines not in `seqs` are skipped, so the user controls exactly which
+/// entries leave memory. Returns how many lines were written.
+#[tauri::command]
+pub fn export_logs(
+    bus: tauri::State<'_, LogBus>,
+    seqs: Vec<u64>,
+    dest: String,
+) -> Result<usize, AppError> {
+    if dest.trim().is_empty() {
+        return Err(AppError::Other("no export path provided".into()));
+    }
+    let wanted: HashSet<u64> = seqs.into_iter().collect();
+    let lines: Vec<LogLine> = bus
+        .snapshot()
+        .into_iter()
+        .filter(|l| wanted.contains(&l.seq))
+        .collect();
+    if lines.is_empty() {
+        return Err(AppError::Other("no matching log lines to export".into()));
+    }
+    let mut out = String::with_capacity(lines.len() * 80);
+    out.push_str("# Maestro log export\n");
+    out.push_str("# secrets/credentials best-effort redacted; may still contain visited destinations\n");
+    for l in &lines {
+        // Same scrubbing as the crash dump: never write the API secret or known
+        // credential fields into a file the user is about to share.
+        let line = format!(
+            "{} [{:<5}] {}: {}",
+            fmt_utc(l.ts),
+            l.level.to_uppercase(),
+            l.source,
+            l.message
+        );
+        out.push_str(&crate::crash::redact_line(&line));
+        out.push('\n');
+    }
+    std::fs::write(&dest, out).map_err(|e| AppError::Other(format!("write export: {e}")))?;
+    Ok(lines.len())
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Format unix-millis as `YYYY-MM-DD HH:MM:SS UTC` without a date dependency
+/// (Howard Hinnant's civil-from-days algorithm). Used by log export and the
+/// crash dump so timestamps are stable and timezone-unambiguous.
+pub fn fmt_utc(ms: u64) -> String {
+    let secs = (ms / 1000) as i64;
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    let (h, mi, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if m <= 2 { y + 1 } else { y };
+    format!("{year:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02} UTC")
 }
 
 fn normalize_level(level: &str) -> &'static str {
@@ -115,6 +180,43 @@ fn normalize_level(level: &str) -> &'static str {
         "error" | "err" | "fatal" | "panic" => "error",
         _ => "info",
     }
+}
+
+/// Strip ANSI/VT escape sequences (CSI, e.g. the colour SGR `\x1b[36m` and reset
+/// `\x1b[0m`) from a line using an exact literal scan — NO regex/backtracking.
+/// sing-box colourises console output; the reset's trailing `m` would otherwise
+/// glue onto the level word (`\x1b[36mINFO` → token `mINFO`) and defeat level
+/// parsing. Stripping also keeps the displayed and exported message text clean.
+pub fn strip_ansi(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            // ESC. A CSI sequence is `ESC [` … <final byte 0x40..=0x7e>.
+            if i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                i += 2;
+                while i < bytes.len() && !(0x40..=0x7e).contains(&bytes[i]) {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1; // consume the final byte
+                }
+            } else {
+                // Lone ESC or a non-CSI escape: drop ESC and the following byte.
+                i += 1;
+                if i < bytes.len() {
+                    i += 1;
+                }
+            }
+        } else {
+            // Copy verbatim. Escape bytes are ASCII and never appear inside a
+            // multibyte UTF-8 char, so the surviving bytes stay valid UTF-8.
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Extract a log level from a sing-box stdout line by finding the first

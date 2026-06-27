@@ -1,23 +1,35 @@
 [package]
-name = "sing-box-launcher"
+name = "maestro"
 version = "0.1.0"
-description = "A Tauri v2 GUI for managing sing-box proxy core"
-authors = ["sing-box-launcher contributors"]
+description = "Maestro — a Tauri v2 GUI for managing the sing-box proxy core"
+authors = ["Maestro contributors"]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [lib]
 name = "sing_box_launcher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Force the portable (--no-bundle) binary to be named Maestro.exe regardless of
+# the package name.
+[[bin]]
+name = "Maestro"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }
-tonic-build = "0.12"
+# tonic 0.14 split proto codegen into tonic-prost-build (build.rs uses it
+# directly); tonic-build comes in transitively.
+tonic-prost-build = "0.14"
 protoc-bin-vendored = "3.2"
 
 [dependencies]
 tauri = { version = "2.11", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.5"
+tauri-plugin-single-instance = "2.4"
+# Native save dialog for the log export feature (per-entry export to a
+# user-chosen path).
+tauri-plugin-dialog = "2.7"
 tokio = { version = "1.52", features = ["full"] }
 reqwest = { version = "0.13", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -28,10 +40,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 log = "0.4"
 sha2 = "0.11"
+semver = "1.0"
 getrandom = "0.4"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
-tonic = "0.12"
-prost = "0.13"
+tonic = "0.14"
+# tonic 0.14 moved the prost codec into tonic-prost; the generated client code
+# needs it at runtime.
+tonic-prost = "0.14"
+prost = "0.14"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
@@ -40,6 +56,7 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
 ] }
 
 [profile.release]

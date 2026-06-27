@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { applyThemeTokens, type ThemeMode } from "../lib/colorEngine";
 import type { Lang } from "../i18n/strings";
 import type {
@@ -38,9 +39,11 @@ interface AppState {
 
   // Proxy groups
   groups: ProxyGroup[];
-  selectedGroup: string | null;
   delays: Record<string, DelayMap>;
   testingGroup: string | null;
+
+  // Outbound-IP refresh signal (bumped on clash-mode or node switch)
+  ipNonce: number;
 
   // Actions
   fetchStatus: () => Promise<void>;
@@ -51,7 +54,7 @@ interface AppState {
   fetchGroups: () => Promise<void>;
   switchProxy: (group: string, node: string) => Promise<void>;
   testDelay: (group: string) => Promise<void>;
-  selectGroup: (group: string) => void;
+  bumpIp: () => void;
 
   // Internal
   setStatus: (status: CoreStatus) => void;
@@ -72,7 +75,6 @@ const defaultStatus: CoreStatus = {
 const STORAGE_THEME = "sb-theme";
 const STORAGE_ACCENT = "sb-accent";
 const STORAGE_ACCENT_SRC = "sb-accent-source";
-const STORAGE_GROUP = "sb-selected-group";
 const STORAGE_LANG = "sb-lang";
 const DEFAULT_ACCENT = "#0078D4";
 
@@ -156,9 +158,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Proxy groups
   groups: [],
-  selectedGroup: load(STORAGE_GROUP, "") || null,
   delays: {},
   testingGroup: null,
+  ipNonce: 0,
 
   // Actions
   fetchStatus: async () => {
@@ -187,7 +189,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       await invoke("stop_core");
       const status = await invoke<CoreStatus>("get_status");
-      set({ status, loading: false, groups: [], selectedGroup: null, delays: {} });
+      set({ status, loading: false, groups: [], delays: {} });
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -195,12 +197,36 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   restartCore: async () => {
     set({ loading: true, error: null });
+    const win = getCurrentWindow();
     try {
-      await invoke<ConfigInfo>("restart_core");
-      const status = await invoke<CoreStatus>("get_status");
-      set({ status, loading: false, delays: {} });
+      // Respect the user's system-proxy choice across the restart: stop_core
+      // turns it off, so remember whether it was on and turn it back on once the
+      // core is up again (only if the new config still exposes a proxy server).
+      const wasProxy = get().status.proxy_enabled;
+      // Visible restart: clearly show the app "exit" (stop core + hide window),
+      // a perceptible pause, then bring it back (start core + raise window) —
+      // so the user sees two distinct phases rather than an instant swap.
+      await invoke("stop_core");
+      set({ status: await invoke<CoreStatus>("get_status"), groups: [], delays: {} });
+      await new Promise((r) => setTimeout(r, 450));   // let "stopped" register
+      await win.hide();                                // visible exit
+      await new Promise((r) => setTimeout(r, 1500));   // perceptible gap
+      await invoke<ConfigInfo>("start_core");
+      let status = await invoke<CoreStatus>("get_status");
+      if (wasProxy && status.proxy_server && !status.proxy_enabled) {
+        try {
+          await invoke("toggle_system_proxy");
+          status = await invoke<CoreStatus>("get_status");
+        } catch { /* new config may be TUN-only — leave proxy off */ }
+      }
+      set({ status, loading: false });
+      try {
+        await win.unminimize(); await win.show(); await win.setFocus();
+        await win.setAlwaysOnTop(true); await win.setAlwaysOnTop(false);
+      } catch { /* noop */ }
       setTimeout(() => get().fetchGroups(), 1500);
     } catch (e) {
+      try { await win.show(); await win.setFocus(); } catch { /* noop */ }
       set({ error: String(e), loading: false });
     }
   },
@@ -219,11 +245,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchGroups: async () => {
     try {
       const groups = await invoke<ProxyGroup[]>("get_proxy_groups");
-      const selectedGroup =
-        get().selectedGroup && groups.find((g) => g.name === get().selectedGroup)
-          ? get().selectedGroup
-          : groups[0]?.name ?? null;
-      set({ groups, selectedGroup });
+      set({ groups });
     } catch {
       // Groups not ready yet
     }
@@ -232,8 +254,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   switchProxy: async (group, node) => {
     try {
       await invoke("switch_proxy", { group, node });
+      // Node changed → outbound route changed; re-resolve the outbound IP.
       set((s) => ({
         groups: s.groups.map((g) => g.name === group ? { ...g, now: node } : g),
+        ipNonce: s.ipNonce + 1,
       }));
     } catch (e) {
       set({ error: String(e) });
@@ -250,19 +274,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  selectGroup: (group) => {
-    save(STORAGE_GROUP, group);
-    set({ selectedGroup: group });
-  },
+  bumpIp: () => set((s) => ({ ipNonce: s.ipNonce + 1 })),
 
   setStatus: (status) => set({ status }),
-  setGroups: (groups) => {
-    const selectedGroup =
-      get().selectedGroup && groups.find((g) => g.name === get().selectedGroup)
-        ? get().selectedGroup
-        : groups[0]?.name ?? null;
-    set({ groups, selectedGroup });
-  },
+  setGroups: (groups) => set({ groups }),
   clearError: () => set({ error: null }),
 }));
 

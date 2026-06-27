@@ -1,14 +1,15 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
-import { Proxies } from "./pages/Proxies";
+import { Config } from "./pages/Config";
 import { Connections } from "./pages/Connections";
 import { Logs } from "./pages/Logs";
 import { Settings } from "./pages/Settings";
 import { useAppStore } from "./stores/appStore";
-import type { CoreStatus, ProxyGroup, Page } from "./types";
+import type { CoreStatus, ProxyGroup, Page, AppSettings } from "./types";
 
 export function App() {
   const page = useAppStore((s) => s.page);
@@ -16,10 +17,25 @@ export function App() {
   const setStatus = useAppStore((s) => s.setStatus);
   const setGroups = useAppStore((s) => s.setGroups);
   const setPage = useAppStore((s) => s.setPage);
+  const startCore = useAppStore((s) => s.startCore);
+  const stopCore = useAppStore((s) => s.stopCore);
+  const restartCore = useAppStore((s) => s.restartCore);
 
   // Initialize: fetch status and set up event listeners
   useEffect(() => {
     fetchStatus();
+
+    // Auto-start the core on launch if enabled (and not already running, e.g.
+    // when the core was left running after a previous close).
+    (async () => {
+      try {
+        const s = await invoke<AppSettings>("get_settings");
+        if (s.auto_start_core) {
+          const st = await invoke<CoreStatus>("get_status");
+          if (!st.running) startCore();
+        }
+      } catch { /* ignore */ }
+    })();
 
     const unlistenStatus = listen<CoreStatus>("core-status-changed", (e) => {
       setStatus(e.payload);
@@ -34,6 +50,13 @@ export function App() {
       setPage(e.payload as Page);
     });
 
+    // Tray core controls run through the same commands as the GUI buttons.
+    const unlistenAction = listen<string>("tray-action", (e) => {
+      if (e.payload === "start") startCore();
+      else if (e.payload === "stop") stopCore();
+      else if (e.payload === "restart") restartCore();
+    });
+
     // Poll status every 5 seconds for uptime updates
     const interval = setInterval(fetchStatus, 5000);
 
@@ -41,6 +64,7 @@ export function App() {
       unlistenStatus.then((f) => f());
       unlistenGroups.then((f) => f());
       unlistenNav.then((f) => f());
+      unlistenAction.then((f) => f());
       clearInterval(interval);
     };
   }, []);
@@ -64,7 +88,7 @@ export function App() {
 
         <main style={{ flex: 1, overflow: "auto" }}>
           {page === "dashboard" && <Dashboard />}
-          {page === "proxies" && <Proxies />}
+          {page === "config" && <Config />}
           {page === "connections" && <Connections />}
           {page === "logs" && <Logs />}
           {page === "settings" && <Settings />}

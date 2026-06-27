@@ -11,6 +11,11 @@ pub struct ConfigInfo {
     pub proxy_server: String,
     pub api_address: String,
     pub api_secret: String,
+    /// Whether the config asks Maestro to enable the Windows system proxy on
+    /// startup (TUN `platform.http_proxy`, or a `mixed`/`http` inbound with
+    /// `set_system_proxy: true`). Used only as the FIRST-LAUNCH default per
+    /// config; a later user toggle overrides and is persisted.
+    pub wants_system_proxy: bool,
 }
 
 /// Entry in the config list
@@ -77,6 +82,7 @@ pub fn prepare_runtime_config(
     let (api_address, api_secret) = inject_api(&mut config)?;
     inject_log_level(&mut config, log_level);
     let proxy_server = extract_proxy_server(&config);
+    let wants_system_proxy = config_wants_system_proxy(&config);
 
     let runtime_path = base_dir.join("config_runtime.json");
     let runtime_raw = serde_json::to_string_pretty(&config)?;
@@ -94,6 +100,7 @@ pub fn prepare_runtime_config(
         proxy_server,
         api_address,
         api_secret,
+        wants_system_proxy,
     })
 }
 
@@ -345,25 +352,38 @@ fn inject_api(config: &mut Value) -> Result<(String, String), AppError> {
         .as_object_mut()
         .ok_or_else(|| AppError::Config("api service must be a JSON object".into()))?;
 
-    let listen = api
+    let configured_listen = api
         .get("listen")
         .and_then(|v| v.as_str())
         .unwrap_or(DEFAULT_HOST)
         .to_string();
     let port = api.get("listen_port").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_PORT);
 
-    // Ensure the loopback control port is authenticated: keep a user-provided
-    // secret, otherwise generate one and inject it into the runtime config.
+    // Force the control API to loopback in the RUNTIME config — not just the
+    // host the GUI reports. A config binding 0.0.0.0/:: would otherwise expose
+    // the Bearer-authenticated control port to the LAN while the GUI still shows
+    // 127.0.0.1. If the config tried to bind non-loopback, also drop its secret
+    // and force a fresh random one (a shared config could ship a known secret
+    // for LAN-authenticated control).
+    let non_loopback = !is_loopback(&configured_listen);
+    let listen = if non_loopback {
+        api.insert("listen".into(), Value::String(DEFAULT_HOST.into()));
+        DEFAULT_HOST.to_string()
+    } else {
+        configured_listen
+    };
+
     let secret = match api.get("secret").and_then(|v| v.as_str()) {
-        Some(s) if !s.is_empty() => s.to_string(),
+        Some(s) if !s.is_empty() && !non_loopback => s.to_string(),
         _ => {
-            let s = generate_secret();
+            let s = generate_secret()?;
             api.insert("secret".into(), Value::String(s.clone()));
             s
         }
     };
 
-    let host = if listen == "0.0.0.0" || listen == "::" { DEFAULT_HOST } else { &listen };
+    // Bracket an IPv6 loopback so the connect address parses ("[::1]:9090").
+    let host = if listen == "::1" { "[::1]".to_string() } else { listen };
     Ok((format!("{host}:{port}"), secret))
 }
 
@@ -391,32 +411,49 @@ fn combine_output(out: &std::process::Output) -> String {
     s.trim().to_string()
 }
 
-/// Override `log.level` in the config so the GUI setting drives core verbosity.
+/// Force the runtime config's log output so the GUI always receives the full
+/// stream: set `level` (we pass "trace"), keep logging enabled, and route it to
+/// stdout (we capture stdout into the in-memory log bus; nothing is written to
+/// disk). Only `config_runtime.json` is touched — the user's saved config is
+/// never modified.
 fn inject_log_level(config: &mut Value, level: &str) {
     if let Some(obj) = config.as_object_mut() {
         let log = ensure_object(obj, "log");
         log.insert("level".into(), Value::String(level.to_string()));
+        log.insert("disabled".into(), Value::Bool(false));
+        log.remove("output");
+        // NOTE: we deliberately do NOT inject a colour-disable field here —
+        // sing-box's log object only accepts disabled/level/output/timestamp and
+        // rejects unknown fields, so a `disable_color` key would fail config
+        // validation and stop the core from starting. The core's ANSI colour
+        // codes are stripped instead in manager::spawn_reader (logbus::strip_ansi).
     }
 }
 
-/// Generate a random 128-bit hex token for the native API secret.
-fn generate_secret() -> String {
+/// Generate a random 128-bit hex token for the native API secret. Fails closed:
+/// if the OS RNG is unavailable we refuse rather than fall back to a predictable
+/// time/pid-derived value (the secret guards the local control API).
+fn generate_secret() -> Result<String, AppError> {
     let mut bytes = [0u8; 16];
-    if getrandom::fill(&mut bytes).is_err() {
-        use sha2::{Digest, Sha256};
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let mut h = Sha256::new();
-        h.update(nanos.to_le_bytes());
-        h.update(std::process::id().to_le_bytes());
-        bytes.copy_from_slice(&h.finalize()[..16]);
-    }
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    getrandom::fill(&mut bytes)
+        .map_err(|e| AppError::Config(format!("secure RNG unavailable for API secret: {e}")))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Find the first HTTP/SOCKS/mixed inbound -> "host:port"
+/// Whether an API listen address is a loopback address (safe to expose only the
+/// local control port). Anything else (0.0.0.0, ::, a LAN IP) is treated as a
+/// non-loopback bind that must be forced back to loopback.
+fn is_loopback(host: &str) -> bool {
+    host.is_empty()
+        || host == "localhost"
+        || host == "::1"
+        || host == "[::1]"
+        || host.starts_with("127.")
+}
+
+/// Find the proxy "host:port" the system proxy should point at: prefer a
+/// mixed/http/socks inbound, else fall back to a TUN inbound's
+/// `platform.http_proxy` (the system-proxy target for a TUN config).
 fn extract_proxy_server(config: &Value) -> String {
     let inbounds = match config.get("inbounds").and_then(|v| v.as_array()) {
         Some(arr) => arr,
@@ -428,10 +465,25 @@ fn extract_proxy_server(config: &Value) -> String {
     let mut mixed: Option<Entry> = None;
     let mut http: Option<Entry> = None;
     let mut socks: Option<Entry> = None;
+    let mut tun_http: Option<Entry> = None;
 
     for raw in inbounds {
         let ib = match raw.as_object() { Some(o) => o, None => continue };
         let typ = ib.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if typ == "tun" {
+            // A TUN inbound has no listen_port; its platform HTTP proxy (if any)
+            // is the address the system proxy should be set to.
+            if tun_http.is_none()
+                && let Some(hp) = ib.get("platform").and_then(|p| p.get("http_proxy"))
+            {
+                    let server = hp.get("server").and_then(|v| v.as_str()).unwrap_or("");
+                    let sport = hp.get("server_port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+                    if !server.is_empty() && sport > 0 {
+                        tun_http = Some(Entry { host: server.to_string(), port: sport });
+                    }
+            }
+            continue;
+        }
         let host = ib.get("listen").and_then(|v| v.as_str()).unwrap_or("127.0.0.1").to_string();
         let port = ib.get("listen_port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
         if port == 0 { continue; }
@@ -444,11 +496,47 @@ fn extract_proxy_server(config: &Value) -> String {
         }
     }
 
-    match mixed.or(http).or(socks) {
+    match mixed.or(http).or(socks).or(tun_http) {
         Some(e) => {
             let h = if e.host == "0.0.0.0" || e.host == "::" { "127.0.0.1" } else { &e.host };
             format!("{h}:{}", e.port)
         }
         None => String::new(),
     }
+}
+
+/// Whether the config asks Maestro to turn the Windows system proxy ON when the
+/// core starts: a `tun` inbound carrying an (enabled) `platform.http_proxy`, or a
+/// `mixed`/`http` inbound with `set_system_proxy: true`. This is consulted ONLY
+/// as the first-launch default for a config; once the user toggles the system
+/// proxy in the GUI, that per-config choice is persisted and wins thereafter.
+fn config_wants_system_proxy(config: &Value) -> bool {
+    let inbounds = match config.get("inbounds").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return false,
+    };
+    for raw in inbounds {
+        let ib = match raw.as_object() { Some(o) => o, None => continue };
+        match ib.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+            "tun" => {
+                if let Some(hp) = ib.get("platform").and_then(|p| p.get("http_proxy")) {
+                    // `enabled` absent but http_proxy present is treated as intent;
+                    // only an explicit `enabled: false` opts out.
+                    let enabled = hp.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+                    let has_server = hp.get("server").and_then(|v| v.as_str())
+                        .map(|s| !s.is_empty()).unwrap_or(false);
+                    if enabled && has_server {
+                        return true;
+                    }
+                }
+            }
+            "mixed" | "http"
+                if ib.get("set_system_proxy").and_then(|v| v.as_bool()).unwrap_or(false) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }

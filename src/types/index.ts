@@ -24,9 +24,22 @@ export interface AppSettings {
   active_config: string;
   run_as_admin: boolean;
   log_level: string;
-  log_persist: boolean;
   lang: string;
+  allow_multiple: boolean;
+  close_to_tray: boolean;
+  auto_start_core: boolean;
+  exit_core_on_close: boolean;
+  startup_delay_secs: number;
+  disable_gpu_compositing: boolean;
+  kernel_source: KernelSource;
+  kernel_channel: KernelChannel;
+  // null = unset (follows the kernel: on for lurixo, off otherwise); a boolean
+  // is an explicit user choice. Serialized from Rust's Option<bool>.
+  outbound_ip_card: boolean | null;
 }
+
+export type KernelSource = "lurixo" | "sagernet" | "ref1nd";
+export type KernelChannel = "stable" | "dev";
 
 export interface LogLine {
   source: string;
@@ -84,27 +97,61 @@ export interface CheckResult {
   content: string;
 }
 
-export interface CoreBuildInfo {
-  version: string;
-  windows_asset: string;
-  windows_sha256: string;
-  built_at: string;
-  run_id: string;
-}
-
 export interface CoreInfo {
   present: boolean;
-  build: CoreBuildInfo | null;
+  source: KernelSource;
+  channel: string;
+  version: string | null;
+  tag: string | null;
 }
 
 export interface CoreUpdateCheck {
-  current: CoreBuildInfo | null;
-  latest: CoreBuildInfo;
+  source: KernelSource;
+  channel: string;
+  current_version: string | null;
+  latest_version: string;
+  latest_tag: string;
   update_available: boolean;
+}
+
+export interface StagedKernel {
+  source: KernelSource;
+  version: string;
+}
+
+export interface RollbackTarget {
+  source: KernelSource;
+  version: string;
+  channel: string;
+  tag: string;
+}
+
+export interface AppInfo {
+  version: string;
+  built_at: string;
+}
+
+export interface AppUpdateCheck {
+  current_built_at: string;
+  latest_version: string;
+  latest_built_at: string;
+  update_available: boolean;
+  installed: boolean;
+}
+
+export interface StagedApp {
+  version: string;
+  built_at: string;
+}
+
+export interface AppRollback {
+  version: string;
+  built_at: string;
+  installed: boolean;
 }
 
 export type DelayMap = Record<string, number>;
 
-export type Page = "dashboard" | "proxies" | "connections" | "logs" | "settings";
+export type Page = "dashboard" | "config" | "connections" | "logs" | "settings";
 
 export type Theme = "light" | "dark" | "system";

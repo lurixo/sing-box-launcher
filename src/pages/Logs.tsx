@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DeleteRegular } from "@fluentui/react-icons";
+import type { MouseEvent as ReactMouseEvent } from "react";
+import { ArrowDownloadRegular, CopyRegular, DeleteRegular } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
 import type { AppSettings, LogLine } from "../types";
@@ -44,10 +46,19 @@ export function Logs() {
   const [source, setSource] = useState<"core" | "app">("core");
   const [minLevel, setMinLevel] = useState<Level>("info");
   const [autoScroll, setAutoScroll] = useState(true);
+  // Per-entry export selection, keyed by the line's seq so it survives buffer
+  // scroll-off (lines that roll out of the buffer are simply skipped on export).
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [exportMsg, setExportMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Drag-select state, declared up here so the tail-follow effect can pause while
+  // a drag is live. dragRef holds the anchor seq + add/remove mode; autoScrollRef
+  // tracks edge auto-scroll during a drag (round-10 #3).
+  const dragRef = useRef<{ anchor: number; mode: boolean } | null>(null);
+  const autoScrollRef = useRef<{ y: number; raf: number } | null>(null);
 
-  // Seed the level from the persisted kernel log level — this switch is the
-  // single source of truth for verbosity (it also filters the view below).
+  // Seed the display filter from the persisted preference. The core always logs
+  // at full (trace) detail; this switch only filters what the view renders.
   useEffect(() => {
     invoke<AppSettings>("get_settings")
       .then((s) => {
@@ -58,9 +69,11 @@ export function Logs() {
       .catch(() => {});
   }, []);
 
-  // Change the kernel verbosity (persisted, applied on next core start) and the
-  // display filter together.
+  // Pure GUI filter: the core always records at trace, so changing the level
+  // only changes what the view renders — instant, and it never touches the core,
+  // system proxy, or connections. We persist the choice as the default filter.
   const changeLevel = (level: Level) => {
+    if (level === minLevel) return;
     setMinLevel(level);
     invoke("set_log_level", { level }).catch(() => {});
   };
@@ -75,12 +88,20 @@ export function Logs() {
         return merged.length > 5000 ? merged.slice(-5000) : merged;
       });
 
+    // Coalesce the live log stream: buffer incoming lines and flush on a timer
+    // so a burst can't drive a per-line re-render/repaint storm (a second
+    // WebView2 ACCESS_VIOLATION source, like the unthrottled chart was).
+    let buffer: LogLine[] = [];
+    const flush = setInterval(() => {
+      if (buffer.length) { const batch = buffer; buffer = []; merge(batch); }
+    }, 250);
+
     // Register the live listener before fetching the backlog so no line slips
     // through the gap between the snapshot and the subscription.
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     (async () => {
-      const fn = await listen<LogLine>("log-line", (e) => merge([e.payload]));
+      const fn = await listen<LogLine>("log-line", (e) => { buffer.push(e.payload); });
       if (cancelled) { fn(); return; }
       unlisten = fn;
       try {
@@ -92,19 +113,32 @@ export function Logs() {
     return () => {
       cancelled = true;
       unlisten?.();
+      clearInterval(flush);
     };
   }, []);
 
+  // Cap rendered rows so a trace-level view (the core always logs at trace)
+  // can't explode the DOM. Auto-scroll keeps the tail visible.
   const visible = useMemo(
-    () => lines.filter((l) => l.source === source && rank(l.level) >= rank(minLevel)).slice(-2000),
+    () => lines.filter((l) => l.source === source && rank(l.level) >= rank(minLevel)).slice(-1000),
     [lines, source, minLevel],
   );
 
   useEffect(() => {
-    if (autoScroll && scrollRef.current) {
+    // Don't tail-follow while a drag-select is live (round-10 #3): it would yank
+    // the viewport to the bottom and fight the edge auto-scroll.
+    if (autoScroll && !dragRef.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [visible, autoScroll]);
+
+  // The export/copy notice is a floating overlay (below), so it never displaces
+  // the log view; auto-dismiss it so it doesn't linger.
+  useEffect(() => {
+    if (!exportMsg) return;
+    const id = setTimeout(() => setExportMsg(null), 2500);
+    return () => clearTimeout(id);
+  }, [exportMsg]);
 
   const handleClear = async () => {
     try {
@@ -113,7 +147,164 @@ export function Logs() {
       /* noop */
     }
     setLines([]);
+    setSelected(new Set());
+    setExportMsg(null);
   };
+
+  const allVisibleSelected = visible.length > 0 && visible.every((l) => selected.has(l.seq));
+
+  const toggleOne = (seq: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(seq)) next.delete(seq);
+      else next.add(seq);
+      return next;
+    });
+
+  const toggleAllVisible = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (visible.every((l) => next.has(l.seq))) {
+        for (const l of visible) next.delete(l.seq);
+      } else {
+        for (const l of visible) next.add(l.seq);
+      }
+      return next;
+    });
+
+  // Export the selected entries to a user-chosen text file. The save dialog
+  // picks the path; the backend writes only the lines whose seq is selected.
+  const handleExport = async () => {
+    const seqs = [...selected];
+    if (seqs.length === 0) return;
+    try {
+      const path = await save({
+        defaultPath: "maestro-logs.txt",
+        filters: [{ name: "Text", extensions: ["txt"] }],
+      });
+      if (!path) return; // user cancelled
+      const n = await invoke<number>("export_logs", { seqs, dest: path });
+      setExportMsg({ ok: true, text: t("logs.exportDone", { count: n }) });
+    } catch {
+      setExportMsg({ ok: false, text: t("logs.exportFailed") });
+    }
+  };
+
+  // One log line as plain text for the clipboard / per-line copy.
+  const fmtLine = (l: LogLine) => `${fmtTime(l.ts)} [${l.level.toUpperCase()}] ${l.message}`;
+
+  const copyText = (text: string) => {
+    if (!text) return;
+    navigator.clipboard?.writeText(text)
+      .then(() => setExportMsg({ ok: true, text: t("logs.copied") }))
+      .catch(() => setExportMsg({ ok: false, text: t("logs.copyFailed") }));
+  };
+
+  // Copy every currently-visible line (respects the source tab + level filter).
+  const handleCopyAll = () => copyText(visible.map(fmtLine).join("\n"));
+
+  // Standard shortcuts on the log view (round-10 #4): Ctrl/Cmd+A selects all
+  // visible rows, Ctrl/Cmd+C copies the selected rows (or all visible if none are
+  // selected). Ignored while a form field has focus so it never hijacks them.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      const k = e.key.toLowerCase();
+      if (k === "a") {
+        e.preventDefault();
+        setSelected(new Set(visible.map((l) => l.seq)));
+      } else if (k === "c") {
+        const rows = selected.size ? visible.filter((l) => selected.has(l.seq)) : visible;
+        if (rows.length) { e.preventDefault(); copyText(rows.map(fmtLine).join("\n")); }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [visible, selected]);
+
+  // Drag-to-select (round-9 B): a vertical mouse drag over the rows ticks/unticks
+  // each row's export checkbox as the cursor covers it — NO text highlight. The
+  // anchor row's current state picks the mode (check when it wasn't selected,
+  // else uncheck), applied to the whole [anchor..cursor] seq range.
+  const rowSeqAt = (target: EventTarget | null): number | null => {
+    const el = (target as HTMLElement | null)?.closest?.(".log-row[data-seq]") as HTMLElement | null;
+    if (!el) return null;
+    const seq = Number(el.dataset.seq);
+    return Number.isFinite(seq) ? seq : null;
+  };
+
+  const applyDragRange = (anchor: number, cursor: number, mode: boolean) => {
+    const lo = Math.min(anchor, cursor);
+    const hi = Math.max(anchor, cursor);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const l of visible) {
+        if (l.seq >= lo && l.seq <= hi) {
+          if (mode) next.add(l.seq);
+          else next.delete(l.seq);
+        }
+      }
+      return next;
+    });
+  };
+
+  const onRowMouseDown = (e: ReactMouseEvent, seq: number) => {
+    // Left button only; let clicks on the checkbox / copy button work normally.
+    if (e.button !== 0 || (e.target as HTMLElement).closest("button, input")) return;
+    e.preventDefault(); // suppress text selection / highlight
+    const mode = !selected.has(seq);
+    dragRef.current = { anchor: seq, mode };
+    applyDragRange(seq, seq, mode);
+  };
+
+  const stopAutoScroll = () => {
+    if (autoScrollRef.current) {
+      cancelAnimationFrame(autoScrollRef.current.raf);
+      autoScrollRef.current = null;
+    }
+  };
+
+  // Runs each frame while the cursor is held near a viewport edge during a drag:
+  // scroll a step, then extend the selection to whatever row is now under it.
+  const edgeScrollTick = () => {
+    const el = scrollRef.current;
+    const drag = dragRef.current;
+    const st = autoScrollRef.current;
+    if (!el || !drag || !st) { stopAutoScroll(); return; }
+    const rect = el.getBoundingClientRect();
+    const EDGE = 28;
+    let dy = 0;
+    if (st.y < rect.top + EDGE) dy = -Math.max(4, (rect.top + EDGE - st.y) / 2);
+    else if (st.y > rect.bottom - EDGE) dy = Math.max(4, (st.y - (rect.bottom - EDGE)) / 2);
+    if (dy === 0) { stopAutoScroll(); return; }
+    el.scrollTop += dy;
+    const seq = rowSeqAt(document.elementFromPoint(rect.left + 24, st.y));
+    if (seq != null) applyDragRange(drag.anchor, seq, drag.mode);
+    st.raf = requestAnimationFrame(edgeScrollTick);
+  };
+
+  const onBodyMouseMove = (e: ReactMouseEvent) => {
+    if (!dragRef.current) return;
+    const cur = rowSeqAt(e.target);
+    if (cur != null) applyDragRange(dragRef.current.anchor, cur, dragRef.current.mode);
+    // Arm / disarm edge auto-scroll based on the cursor's distance to an edge.
+    const el = scrollRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const EDGE = 28;
+    const nearEdge = e.clientY < rect.top + EDGE || e.clientY > rect.bottom - EDGE;
+    if (nearEdge) {
+      if (autoScrollRef.current) autoScrollRef.current.y = e.clientY;
+      else autoScrollRef.current = { y: e.clientY, raf: requestAnimationFrame(edgeScrollTick) };
+    } else {
+      stopAutoScroll();
+    }
+  };
+
+  const endDrag = () => { dragRef.current = null; stopAutoScroll(); };
 
   const tabBtn = (id: "core" | "app", label: string) => (
     <button
@@ -131,18 +322,13 @@ export function Logs() {
       className="animate-in"
       style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 16, height: "100%" }}
     >
-      <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
-        {t("logs.title")}
-      </h1>
-
-      {/* Toolbar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 4 }}>
-          {tabBtn("core", t("logs.core"))}
-          {tabBtn("app", t("logs.app"))}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
+      {/* Level filter lives next to the title (not in the toolbar) so the toolbar
+          action row always fits on one line. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
+          {t("logs.title")}
+        </h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("logs.minLevel")}</span>
           <select
             value={minLevel}
@@ -159,33 +345,112 @@ export function Logs() {
             ))}
           </select>
         </div>
-
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer" }}>
-          <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
-          {t("logs.autoScroll")}
-        </label>
-
-        <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginLeft: "auto" }}>
-          {t("logs.count", { count: visible.length })}
-        </span>
-        <button
-          className="fluent-btn reveal-target"
-          onClick={handleClear}
-          style={{ fontSize: 12, minHeight: 30, padding: "4px 12px" }}
-        >
-          <DeleteRegular style={{ fontSize: 14 }} />
-          {t("logs.clear")}
-        </button>
       </div>
+
+      {/* Toolbar — two groups: the left controls may wrap among themselves on a
+          narrow window, but the right action group (copy / export / clear) is
+          kept together on one line so entering multi-select mode (which widens
+          the export label) can never push "clear" onto a second row. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "nowrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", gap: 4 }}>
+            {tabBtn("core", t("logs.core"))}
+            {tabBtn("app", t("logs.app"))}
+          </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", whiteSpace: "nowrap" }}>
+            <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
+            {t("logs.autoScroll")}
+          </label>
+
+          <label
+            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: visible.length ? "pointer" : "default", opacity: visible.length ? 1 : 0.5, whiteSpace: "nowrap" }}
+            title={t("logs.selectAllHint")}
+          >
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              disabled={visible.length === 0}
+              onChange={toggleAllVisible}
+            />
+            {t("logs.selectAll")}
+          </label>
+
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginLeft: "auto", whiteSpace: "nowrap" }}>
+            {t("logs.count", { count: visible.length })}
+          </span>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <button
+            className="fluent-btn reveal-target"
+            onClick={handleCopyAll}
+            disabled={visible.length === 0}
+            title={t("logs.copyAllHint")}
+            style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", whiteSpace: "nowrap", opacity: visible.length === 0 ? 0.5 : 1 }}
+          >
+            <CopyRegular style={{ fontSize: 14 }} />
+            {t("logs.copyAll")}
+          </button>
+          <button
+            className="fluent-btn reveal-target"
+            onClick={handleExport}
+            disabled={selected.size === 0}
+            title={t("logs.exportHint")}
+            // Fixed width so the label flipping between "导出" and "导出 (N)" as the
+            // selection count ticks (esp. during a drag-select) can't resize the
+            // button every frame — that width jitter read as a scale animation.
+            style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", whiteSpace: "nowrap", minWidth: 128, justifyContent: "center", opacity: selected.size === 0 ? 0.5 : 1 }}
+          >
+            <ArrowDownloadRegular style={{ fontSize: 14 }} />
+            {selected.size ? t("logs.exportN", { count: selected.size }) : t("logs.export")}
+          </button>
+          <button
+            className="fluent-btn reveal-target"
+            onClick={handleClear}
+            style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", whiteSpace: "nowrap" }}
+          >
+            <DeleteRegular style={{ fontSize: 14 }} />
+            {t("logs.clear")}
+          </button>
+        </div>
+      </div>
+
+      {/* Floating overlay toast — does NOT sit in the column flow, so it never
+          shrinks/grows the log view (no layout shift on appear/disappear). */}
+      {exportMsg && (
+        <div
+          style={{
+            position: "fixed", bottom: 24, right: 24, zIndex: 2000,
+            padding: "10px 16px", borderRadius: "var(--radius-md)", maxWidth: "60%",
+            // Opaque card background (not the 8%-alpha status tint) so log text
+            // behind it never bleeds through; the status colour is carried by the
+            // border + a thicker left accent. Bottom-right so it clears the rows.
+            background: "var(--bg-card)",
+            border: `1px solid ${exportMsg.ok ? "var(--status-success)" : "var(--status-danger)"}`,
+            borderLeft: `3px solid ${exportMsg.ok ? "var(--status-success)" : "var(--status-danger)"}`,
+            color: "var(--text-primary)", fontSize: 13, pointerEvents: "none",
+            boxShadow: "var(--shadow-dialog)",
+          }}
+        >
+          {exportMsg.text}
+        </div>
+      )}
 
       {/* Log view */}
       <div
         ref={scrollRef}
         className="fluent-card"
+        onMouseMove={onBodyMouseMove}
+        onMouseUp={endDrag}
+        onMouseLeave={endDrag}
         style={{
           flex: 1, minHeight: 0, overflow: "auto", padding: "10px 12px",
           fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
           fontSize: 12, lineHeight: 1.55, background: "var(--bg-surface)",
+          // A drag over the rows ticks their checkboxes (round-9 B), so the log
+          // body must NOT start a text selection/highlight.
+          userSelect: "none", WebkitUserSelect: "none", cursor: "default",
         }}
       >
         {visible.length === 0 ? (
@@ -194,7 +459,14 @@ export function Logs() {
           </div>
         ) : (
           visible.map((l) => (
-            <div key={l.seq} style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            <div key={l.seq} data-seq={l.seq} className="log-row row-reveal" onMouseDown={(e) => onRowMouseDown(e, l.seq)} style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", alignItems: "flex-start", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
+              <input
+                type="checkbox"
+                checked={selected.has(l.seq)}
+                onChange={() => toggleOne(l.seq)}
+                style={{ flexShrink: 0, marginTop: 3, cursor: "pointer" }}
+                aria-label={t("logs.selectLine")}
+              />
               <span style={{ color: "var(--text-tertiary)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
                 {fmtTime(l.ts)}
               </span>
@@ -202,6 +474,14 @@ export function Logs() {
                 {l.level}
               </span>
               <span style={{ color: "var(--text-primary)", flex: 1 }}>{l.message}</span>
+              <button
+                className="log-copy"
+                onClick={() => copyText(fmtLine(l))}
+                title={t("logs.copyLine")}
+                aria-label={t("logs.copyLine")}
+              >
+                <CopyRegular style={{ fontSize: 13 }} />
+              </button>
             </div>
           ))
         )}

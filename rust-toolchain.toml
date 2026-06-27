@@ -1,0 +1,5 @@
+[toolchain]
+# Pin the current stable for reproducible local + CI builds. Satisfies the real
+# MSRV floor (1.88, from zip 8.6 / tonic 0.14); rustfmt + clippy for the gates.
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
