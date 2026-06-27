@@ -155,6 +155,8 @@ export function Settings() {
   const [appBusy, setAppBusy] = useState(false);
   const [stagedApp, setStagedApp] = useState<StagedApp | null>(null);
   const [appMsg, setAppMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
+  // Live byte progress of an in-flight installer download (installed builds).
+  const [appDlProgress, setAppDlProgress] = useState<{ received: number; total: number | null } | null>(null);
 
   const loadCoreInfo = useCallback(async () => {
     try {
@@ -268,9 +270,18 @@ export function Settings() {
         setCoreMsg({ type: p.stage === "done" ? "ok" : "info", text: p.message });
       },
     );
-    const unApp = listen<{ stage: string; message: string }>("app-update-progress", (e) => {
-      setAppMsg({ type: e.payload.stage === "done" ? "ok" : "info", text: e.payload.message });
-    });
+    const unApp = listen<{ stage: string; message: string; received?: number; total?: number | null }>(
+      "app-update-progress",
+      (e) => {
+        const p = e.payload;
+        if (p.stage === "downloading" && typeof p.received === "number") {
+          setAppDlProgress({ received: p.received, total: p.total ?? null });
+          return;
+        }
+        setAppDlProgress(null);
+        setAppMsg({ type: p.stage === "done" ? "ok" : "info", text: p.message });
+      },
+    );
     return () => { unCore.then((f) => f()); unApp.then((f) => f()); };
   }, [loadCoreInfo]);
 
@@ -454,9 +465,24 @@ export function Settings() {
     setAppBusy(false);
   };
 
-  // Installed (NSIS) builds update by downloading a fresh installer, not by the
-  // portable in-place self-swap (which would desync the install). Send the user
-  // to the releases page instead.
+  // Installed (NSIS) builds update by downloading + running a fresh setup.exe
+  // (NSIS upgrades in place, keeping the uninstall registration), NOT the
+  // portable in-place exe swap. Download+verify the installer, then prompt.
+  const handleDownloadInstaller = async () => {
+    setAppBusy(true);
+    setAppMsg(null);
+    setAppDlProgress(null);
+    try {
+      const s = await invoke<StagedApp>("download_installer_update");
+      setStagedApp(s);
+    } catch (e) {
+      setAppMsg({ type: "err", text: String(e) });
+    }
+    setAppDlProgress(null);
+    setAppBusy(false);
+  };
+
+  // Fallback for installed builds: open the releases page in the browser.
   const handleOpenReleases = async () => {
     try {
       await invoke("open_releases_page");
@@ -465,13 +491,18 @@ export function Settings() {
     }
   };
 
-  // Confirm → swap exe + relaunch. The app exits as part of this call, so there
-  // is nothing to await meaningfully; we just fire it.
+  // Confirm → for the portable build, swap exe + relaunch; for an installed
+  // build, run the staged installer in passive mode. Either way the app exits as
+  // part of this call (the new version is brought back up), so we just fire it.
   const handleApplyApp = async () => {
+    const installed = !!appCheck?.installed;
     setStagedApp(null);
-    setAppMsg({ type: "info", text: t("settings.appUpdateApplied") });
+    setAppMsg({
+      type: "info",
+      text: installed ? t("settings.appUpdateInstalling") : t("settings.appUpdateApplied"),
+    });
     try {
-      await invoke("apply_app_update");
+      await invoke(installed ? "apply_installer_update" : "apply_app_update");
     } catch (e) {
       setAppMsg({ type: "err", text: String(e) });
     }
@@ -1079,15 +1110,30 @@ export function Settings() {
               {t("settings.check")}
             </button>
             {appCheck?.update_available && appCheck.installed && (
-              <button
-                className="fluent-btn accent reveal-target"
-                onClick={handleOpenReleases}
-                style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
-                title={t("settings.appUpdateInstalledHint")}
-              >
-                <ArrowDownloadRegular style={{ fontSize: 14 }} />
-                {t("settings.appUpdateOpenReleases")}
-              </button>
+              <>
+                <button
+                  className="fluent-btn reveal-target"
+                  onClick={handleOpenReleases}
+                  style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+                  title={t("settings.appUpdateInstalledHint")}
+                >
+                  <GlobeRegular style={{ fontSize: 14 }} />
+                  {t("settings.appUpdateOpenReleasesFallback")}
+                </button>
+                <button
+                  className="fluent-btn accent reveal-target"
+                  onClick={handleDownloadInstaller}
+                  disabled={appBusy}
+                  style={{ fontSize: 12, minHeight: 28, padding: "4px 12px" }}
+                >
+                  {appBusy ? (
+                    <span className="progress-ring" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                  ) : (
+                    <ArrowDownloadRegular style={{ fontSize: 14 }} />
+                  )}
+                  {t("settings.appInstallUpdate")}
+                </button>
+              </>
             )}
             {appCheck?.update_available && !appCheck.installed && (
               <button
@@ -1102,6 +1148,32 @@ export function Settings() {
             )}
           </div>
         </div>
+
+        {/* Live installer/app download progress bar (byte counts from backend). */}
+        {appDlProgress && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
+              <span>
+                {appDlProgress.total
+                  ? t("settings.downloadingPct", { pct: Math.floor((appDlProgress.received / appDlProgress.total) * 100) })
+                  : t("settings.downloading")}
+              </span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                {formatBytes(appDlProgress.received)}{appDlProgress.total ? ` / ${formatBytes(appDlProgress.total)}` : ""}
+              </span>
+            </div>
+            <div style={{ height: 6, borderRadius: 3, background: "var(--bg-subtle)", overflow: "hidden" }}>
+              <div
+                style={{
+                  height: "100%",
+                  width: appDlProgress.total ? `${Math.min(100, (appDlProgress.received / appDlProgress.total) * 100)}%` : "100%",
+                  background: "var(--accent-default)",
+                  transition: "width 0.15s linear",
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         {appMsg && (
           <div
@@ -1228,7 +1300,9 @@ export function Settings() {
               {t("settings.appUpdateApplyTitle")}
             </div>
             <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              {t("settings.appUpdateApplyBody", { version: stagedApp.version })}
+              {appCheck?.installed
+                ? t("settings.appUpdateApplyInstallerBody", { version: stagedApp.version })
+                : t("settings.appUpdateApplyBody", { version: stagedApp.version })}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
               <button
@@ -1243,7 +1317,9 @@ export function Settings() {
                 onClick={handleApplyApp}
                 style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}
               >
-                {t("settings.appUpdateApplyConfirm")}
+                {appCheck?.installed
+                  ? t("settings.appUpdateApplyInstallerConfirm")
+                  : t("settings.appUpdateApplyConfirm")}
               </button>
             </div>
           </div>

@@ -220,6 +220,11 @@ export const en = {
   "settings.appUpdateApplied": "Applying update — Maestro will restart…",
   "settings.appUpdateOpenReleases": "Get installer",
   "settings.appUpdateInstalledHint": "This is an installed build — download and run the new installer from the releases page.",
+  "settings.appInstallUpdate": "Download & install",
+  "settings.appUpdateApplyInstallerBody": "Installer {version} has been downloaded. Maestro will close and the installer will upgrade it in place, then relaunch. Continue?",
+  "settings.appUpdateApplyInstallerConfirm": "Close & update",
+  "settings.appUpdateInstalling": "Running installer — Maestro will close and reopen…",
+  "settings.appUpdateOpenReleasesFallback": "Open releases page",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -444,6 +449,11 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.appUpdateApplied": "正在应用更新，Maestro 即将重启…",
   "settings.appUpdateOpenReleases": "获取安装包",
   "settings.appUpdateInstalledHint": "这是安装版构建——请从发布页下载并运行新的安装包。",
+  "settings.appInstallUpdate": "下载并安装",
+  "settings.appUpdateApplyInstallerBody": "已下载安装器 {version}。Maestro 将关闭,由安装器就地升级后自动重启。是否继续?",
+  "settings.appUpdateApplyInstallerConfirm": "关闭并更新",
+  "settings.appUpdateInstalling": "正在运行安装器,Maestro 即将关闭并重新打开…",
+  "settings.appUpdateOpenReleasesFallback": "打开发布页",
 };
 
 export const dictionaries = { en, "zh-CN": zhCN } as const;
