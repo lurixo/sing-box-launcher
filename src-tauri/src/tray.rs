@@ -117,7 +117,9 @@ pub fn rebuild_tray_menu(app: &AppHandle, lang: &str) {
 
 /// Update the tray icon AND tooltip to reflect the current state, so the core's
 /// run state is obvious at a glance (not just on hover). Colour mapping:
-/// stopped → dim gray, running → green, running + system proxy → brand blue.
+/// stopped → dim gray, running → blue, running + system proxy → green.
+/// (The state→file mapping below is unchanged; the icon files themselves carry
+/// the run/proxy colours.)
 pub fn update_tray_icon(app: &AppHandle, running: bool, proxy_enabled: bool) {
     if let Some(tray) = app.tray_by_id("main-tray") {
         let lang = current_lang();
