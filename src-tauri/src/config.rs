@@ -415,6 +415,11 @@ fn inject_log_level(config: &mut Value, level: &str) {
         log.insert("level".into(), Value::String(level.to_string()));
         log.insert("disabled".into(), Value::Bool(false));
         log.remove("output");
+        // NOTE: we deliberately do NOT inject a colour-disable field here —
+        // sing-box's log object only accepts disabled/level/output/timestamp and
+        // rejects unknown fields, so a `disable_color` key would fail config
+        // validation and stop the core from starting. The core's ANSI colour
+        // codes are stripped instead in manager::spawn_reader (logbus::strip_ansi).
     }
 }
 

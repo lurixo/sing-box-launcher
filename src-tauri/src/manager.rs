@@ -301,6 +301,9 @@ where
     tokio::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
         while let Ok(Some(line)) = lines.next_line().await {
+            // Strip the core's ANSI colour codes before parsing/pushing so the
+            // level is read correctly and the stored/exported text is clean.
+            let line = logbus::strip_ansi(&line);
             let level = logbus::parse_core_level(&line);
             bus.push("core", level, line);
         }

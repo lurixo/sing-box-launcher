@@ -182,6 +182,43 @@ fn normalize_level(level: &str) -> &'static str {
     }
 }
 
+/// Strip ANSI/VT escape sequences (CSI, e.g. the colour SGR `\x1b[36m` and reset
+/// `\x1b[0m`) from a line using an exact literal scan — NO regex/backtracking.
+/// sing-box colourises console output; the reset's trailing `m` would otherwise
+/// glue onto the level word (`\x1b[36mINFO` → token `mINFO`) and defeat level
+/// parsing. Stripping also keeps the displayed and exported message text clean.
+pub fn strip_ansi(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            // ESC. A CSI sequence is `ESC [` … <final byte 0x40..=0x7e>.
+            if i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                i += 2;
+                while i < bytes.len() && !(0x40..=0x7e).contains(&bytes[i]) {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1; // consume the final byte
+                }
+            } else {
+                // Lone ESC or a non-CSI escape: drop ESC and the following byte.
+                i += 1;
+                if i < bytes.len() {
+                    i += 1;
+                }
+            }
+        } else {
+            // Copy verbatim. Escape bytes are ASCII and never appear inside a
+            // multibyte UTF-8 char, so the surviving bytes stay valid UTF-8.
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Extract a log level from a sing-box stdout line by finding the first
 /// standalone level token, defaulting to `info`.
 pub fn parse_core_level(line: &str) -> &'static str {
