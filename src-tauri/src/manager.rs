@@ -42,6 +42,13 @@ pub struct ManagerInner {
     /// sha256 of the staged installer (`*-setup.exe`) for an installed build's
     /// self-update — same in-memory integrity anchor as the others.
     pub staged_setup_sha: Option<String>,
+    /// sha256 of the retained PREVIOUS core/app binary (`*.prev`), captured when
+    /// an update is applied. Lets a same-session rollback re-verify the backup
+    /// before swapping it into the admin-executed slot. Cleared on restart — a
+    /// cross-session rollback's `.prev` integrity rests on filesystem ACLs, the
+    /// same residual as the staged files (see review notes).
+    pub prev_core_sha: Option<String>,
+    pub prev_app_sha: Option<String>,
     started_at: Option<std::time::Instant>,
     logbus: LogBus,
 }
@@ -61,6 +68,8 @@ pub fn new_manager(base_dir: PathBuf, logbus: LogBus) -> Manager {
         staged_core_sha: None,
         staged_app_sha: None,
         staged_setup_sha: None,
+        prev_core_sha: None,
+        prev_app_sha: None,
         started_at: None,
         logbus,
     }))

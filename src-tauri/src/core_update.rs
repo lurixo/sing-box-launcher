@@ -43,6 +43,17 @@ const STAGED_CORE: &str = "sing-box.exe.new";
 const STAGED_BUILD_INFO: &str = "singbox-build-info.json.new";
 const STAGED_META: &str = "installed_kernel.json.new";
 const DOWNLOAD_TMP: &str = "sing-box.exe.download";
+/// Durable rollback slot: the core that the last update REPLACED, kept across
+/// sessions so the user can roll back to it. Distinct from the transient
+/// `CORE_OLD` (which exists only mid-swap). Never touched by clear-cache or the
+/// startup cleanup, so a rollback target survives a later update / cache clear.
+const CORE_PREV: &str = "sing-box.exe.prev";
+/// The lurixo build-info paired with `CORE_PREV` (so a rolled-back lurixo kernel
+/// reports the right run_id). Absent when the previous core wasn't a lurixo build.
+const BUILD_INFO_PREV: &str = "singbox-build-info.json.prev";
+/// Transient used by `swap_files` for the build-info ↔ build-info.prev swap;
+/// only present if a rollback was interrupted mid-swap (cleaned next launch).
+const BUILD_INFO_SWAPTMP: &str = "singbox-build-info.json.swaptmp";
 
 /// The three kernel download sources selectable in Settings → Core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,6 +223,37 @@ pub struct InstalledKernel {
     pub tag: String,
     #[serde(default)]
     pub asset: String,
+    /// The kernel this one replaced, retained for a one-step rollback. The backup
+    /// binary lives at `CORE_PREV`; this records its identity. `None` until an
+    /// update has replaced something. Only ONE level is kept (rollback is a
+    /// reversible swap, not an unbounded undo stack).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<PreviousKernel>,
+}
+
+/// Identity of a retained previous kernel (the rollback target). A flat mirror of
+/// the comparable `InstalledKernel` fields — deliberately without its own
+/// `previous`, so the metadata never nests beyond one level.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviousKernel {
+    pub source: String,
+    pub version: String,
+    #[serde(default)]
+    pub channel: String,
+    #[serde(default)]
+    pub tag: String,
+    #[serde(default)]
+    pub asset: String,
+}
+
+fn to_previous(k: &InstalledKernel) -> PreviousKernel {
+    PreviousKernel {
+        source: k.source.clone(),
+        version: k.version.clone(),
+        channel: k.channel.clone(),
+        tag: k.tag.clone(),
+        asset: k.asset.clone(),
+    }
 }
 
 fn meta_path(base_dir: &Path) -> PathBuf {
@@ -232,6 +274,7 @@ fn installed_kernel(base_dir: &Path) -> Option<InstalledKernel> {
         channel: String::new(),
         tag: String::new(),
         asset: String::new(),
+        previous: None,
     })
 }
 
@@ -511,14 +554,39 @@ fn stage_meta(base_dir: &Path, meta: &InstalledKernel) -> Result<(), AppError> {
     Ok(())
 }
 
-// ─── apply / discard / clear (called from lib.rs command wrappers) ───────────
+// ─── apply / rollback / discard / clear (called from lib.rs command wrappers) ─
+
+/// Swap two paths, treating a missing file as a valid "absent" state, so a
+/// binary's paired build-info stays in step across a rollback swap. Best-effort:
+/// the build-info is non-authoritative (metadata drives the UI), so a failed leg
+/// only risks a stale version display until the next update check.
+fn swap_files(a: &Path, b: &Path, tmp: &Path) {
+    let _ = std::fs::remove_file(tmp);
+    if a.exists() {
+        let _ = std::fs::rename(a, tmp); // a -> tmp
+    }
+    if b.exists() {
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::rename(b, a); // b -> a
+    }
+    if tmp.exists() {
+        let _ = std::fs::remove_file(b);
+        let _ = std::fs::rename(tmp, b); // tmp -> b
+    }
+}
 
 /// Swap the staged kernel into place. The caller MUST have stopped the core
 /// first. Re-verifies the staged `.new` bytes against `expected_sha` (captured
 /// at download in this elevated process's memory — a non-elevated process could
 /// have rewritten the on-disk `.new` since), then moves the live core ASIDE to
-/// `.old` (for rollback) before swapping the new one in.
-pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<(), AppError> {
+/// `.old` (transient, for failure rollback) before swapping the new one in.
+///
+/// On success the replaced core is PROMOTED to the durable `CORE_PREV` slot (its
+/// build-info + identity recorded too) so the user can roll back to it later.
+/// Returns the sha256 of that retained backup — the in-memory anchor a same-
+/// session rollback re-verifies it against — or `None` when nothing was replaced
+/// (first install).
+pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<Option<String>, AppError> {
     let staged = base_dir.join(STAGED_CORE);
     if !staged.exists() {
         return Err(AppError::Update("no downloaded core to apply".into()));
@@ -533,6 +601,11 @@ pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<(), A
             ));
         }
     }
+
+    // The on-disk metadata still describes the core we're about to replace; keep
+    // its identity (sans its OWN previous — one level only) as the new rollback
+    // target. Read it BEFORE the swap overwrites the meta file below.
+    let replaced = installed_kernel(base_dir);
 
     let live = base_dir.join(CORE_FILE);
     let old = base_dir.join(CORE_OLD);
@@ -549,46 +622,162 @@ pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<(), A
         }
         return Err(AppError::Update(format!("install core: {e}")));
     }
-    let _ = std::fs::remove_file(&old); // success → drop the backup
 
-    // Remove the destination before each rename: on Windows fs::rename fails if
-    // the target already exists, so a second update would otherwise silently
-    // leave stale metadata (wrong version/source in the UI and update check).
+    // Promote the replaced core to the durable rollback slot (overwriting any
+    // older backup — only the immediately previous version is retained), and
+    // record the sha so a same-session rollback can re-verify it.
+    let prev = base_dir.join(CORE_PREV);
+    let _ = std::fs::remove_file(&prev);
+    let prev_sha = if old.exists() && std::fs::rename(&old, &prev).is_ok() {
+        std::fs::read(&prev).ok().map(|b| sha256_hex(&b))
+    } else {
+        None
+    };
+
+    // Pair the replaced core's build-info with the backup: move the outgoing
+    // build-info to `.prev`, then install the staged one (lurixo sources stage a
+    // build-info; SagerNet/reF1nd don't, leaving the live build-info absent).
+    let prev_bi = base_dir.join(BUILD_INFO_PREV);
+    let _ = std::fs::remove_file(&prev_bi);
+    let cur_bi = build_info_path(base_dir);
+    if cur_bi.exists() {
+        let _ = std::fs::rename(&cur_bi, &prev_bi);
+    }
     let staged_bi = base_dir.join(STAGED_BUILD_INFO);
     if staged_bi.exists() {
-        let dst = build_info_path(base_dir);
-        let _ = std::fs::remove_file(&dst);
-        std::fs::rename(&staged_bi, &dst)
+        std::fs::rename(&staged_bi, &cur_bi)
             .map_err(|e| AppError::Update(format!("apply build info: {e}")))?;
     }
+
+    // Write the new metadata with the retained previous recorded. (If there's no
+    // staged meta — shouldn't happen, download always writes one — leave the old
+    // meta in place rather than fabricate one.)
     let staged_meta = base_dir.join(STAGED_META);
     if staged_meta.exists() {
-        let dst = meta_path(base_dir);
-        let _ = std::fs::remove_file(&dst);
-        std::fs::rename(&staged_meta, &dst)
+        let raw = std::fs::read_to_string(&staged_meta)
+            .map_err(|e| AppError::Update(format!("read staged kernel meta: {e}")))?;
+        let mut meta: InstalledKernel = serde_json::from_str(&raw)
+            .map_err(|e| AppError::Update(format!("parse staged kernel meta: {e}")))?;
+        meta.previous = replaced.as_ref().map(to_previous);
+        let out = serde_json::to_string_pretty(&meta)
+            .map_err(|e| AppError::Update(format!("serialize kernel meta: {e}")))?;
+        std::fs::write(meta_path(base_dir), out)
             .map_err(|e| AppError::Update(format!("apply kernel meta: {e}")))?;
+        let _ = std::fs::remove_file(&staged_meta);
     }
-    Ok(())
+    Ok(prev_sha)
+}
+
+/// Roll the kernel back to the retained previous version: a SYMMETRIC swap of the
+/// live binary with the `CORE_PREV` backup (and their build-info + metadata), so
+/// the operation is itself reversible (the version rolled away from becomes the
+/// new backup, allowing a roll-forward). The caller MUST have stopped the core.
+///
+/// `expected_prev_sha` is the in-memory anchor captured when the backup was made;
+/// when present (same session) the backup is re-verified before it becomes the
+/// admin-run core. When absent (the `.prev` survived a restart) the swap proceeds
+/// — a cross-session backup has no in-memory anchor by design, so its integrity
+/// rests on the data dir's filesystem ACLs (a known residual, see review notes).
+/// Returns the sha of the NEW backup (the version rolled away from) to re-anchor.
+pub fn rollback(base_dir: &Path, expected_prev_sha: Option<&str>) -> Result<Option<String>, AppError> {
+    let prev = base_dir.join(CORE_PREV);
+    if !prev.exists() {
+        return Err(AppError::Update("no previous kernel to roll back to".into()));
+    }
+    let current = installed_kernel(base_dir)
+        .ok_or_else(|| AppError::Update("no installed-kernel metadata".into()))?;
+    let target = current
+        .previous
+        .clone()
+        .ok_or_else(|| AppError::Update("no previous kernel recorded".into()))?;
+
+    if let Some(expected) = expected_prev_sha {
+        let bytes = std::fs::read(&prev)
+            .map_err(|e| AppError::Update(format!("read previous core: {e}")))?;
+        if !sha256_hex(&bytes).eq_ignore_ascii_case(expected) {
+            return Err(AppError::Update(
+                "previous kernel failed integrity check; rollback refused".into(),
+            ));
+        }
+    }
+
+    // Swap live <-> prev through the shared transient (CORE_OLD), so an
+    // interrupted rollback recovers via the same cleanup_leftovers path as an
+    // interrupted apply (live missing + `.old` present -> restore).
+    let live = base_dir.join(CORE_FILE);
+    let old = base_dir.join(CORE_OLD);
+    let _ = std::fs::remove_file(&old);
+    if live.exists() {
+        std::fs::rename(&live, &old)
+            .map_err(|e| AppError::Update(format!("set aside current core: {e}")))?;
+    }
+    if let Err(e) = std::fs::rename(&prev, &live) {
+        if old.exists() {
+            let _ = std::fs::rename(&old, &live);
+        }
+        return Err(AppError::Update(format!("restore previous core: {e}")));
+    }
+    // The version rolled away from becomes the new backup (roll-forward target).
+    let new_prev_sha = if old.exists() && std::fs::rename(&old, &prev).is_ok() {
+        std::fs::read(&prev).ok().map(|b| sha256_hex(&b))
+    } else {
+        None
+    };
+
+    // Keep the build-info paired with the binary across the swap.
+    swap_files(
+        &build_info_path(base_dir),
+        &prev_bi_path(base_dir),
+        &base_dir.join(BUILD_INFO_SWAPTMP),
+    );
+
+    // Rebuild metadata: previous becomes current, current becomes previous.
+    let new_meta = InstalledKernel {
+        source: target.source,
+        version: target.version,
+        channel: target.channel,
+        tag: target.tag,
+        asset: target.asset,
+        previous: Some(to_previous(&current)),
+    };
+    let raw = serde_json::to_string_pretty(&new_meta)
+        .map_err(|e| AppError::Update(format!("serialize kernel meta: {e}")))?;
+    std::fs::write(meta_path(base_dir), raw)
+        .map_err(|e| AppError::Update(format!("write kernel meta: {e}")))?;
+    Ok(new_prev_sha)
+}
+
+fn prev_bi_path(base_dir: &Path) -> PathBuf {
+    base_dir.join(BUILD_INFO_PREV)
 }
 
 /// Drop a staged-but-not-applied download (user cancelled the restart prompt).
+/// The durable rollback backup (`CORE_PREV`) is deliberately left intact.
 pub fn discard_staged(base_dir: &Path) {
     for n in [STAGED_CORE, STAGED_BUILD_INFO, STAGED_META, DOWNLOAD_TMP] {
         let _ = std::fs::remove_file(base_dir.join(n));
     }
 }
 
-/// Startup recovery: if a prior apply was interrupted (live core missing but a
-/// `.old` backup present) restore it, then discard any cross-session staged
-/// artifacts. A `.new` from a previous session can no longer be integrity-
-/// checked (its in-memory hash is gone), so it is dropped rather than trusted.
+/// Startup recovery: if a prior apply/rollback was interrupted (live core missing
+/// but a `.old` backup present) restore it, then discard any cross-session staged
+/// artifacts. A `.new` from a previous session can no longer be integrity-checked
+/// (its in-memory hash is gone), so it is dropped rather than trusted. The durable
+/// rollback backup (`CORE_PREV` + its build-info) is PRESERVED across sessions.
 pub fn cleanup_leftovers(base_dir: &Path) {
     let live = base_dir.join(CORE_FILE);
     let old = base_dir.join(CORE_OLD);
     if !live.exists() && old.exists() {
         let _ = std::fs::rename(&old, &live);
     }
-    for n in [CORE_OLD, STAGED_CORE, STAGED_BUILD_INFO, STAGED_META, DOWNLOAD_TMP] {
+    for n in [
+        CORE_OLD,
+        STAGED_CORE,
+        STAGED_BUILD_INFO,
+        STAGED_META,
+        DOWNLOAD_TMP,
+        BUILD_INFO_SWAPTMP,
+    ] {
         let _ = std::fs::remove_file(base_dir.join(n));
     }
 }
@@ -597,6 +786,9 @@ pub fn cleanup_leftovers(base_dir: &Path) {
 /// artifacts, keeping the in-use sing-box.exe and its metadata. The caller must
 /// have stopped the core (cache.db is locked while it runs). Returns how many
 /// files were actually removed.
+///
+/// The durable rollback backup (`CORE_PREV` + `BUILD_INFO_PREV`) is intentionally
+/// NOT cleared here — clearing the cache must never destroy a rollback target.
 pub fn clear_cache(base_dir: &Path) -> u32 {
     let mut removed = 0u32;
     for n in ["cache.db", STAGED_CORE, STAGED_BUILD_INFO, STAGED_META, DOWNLOAD_TMP] {
@@ -774,6 +966,38 @@ pub async fn get_staged_kernel(
     Ok(staged)
 }
 
+/// The kernel a rollback would restore (the retained previous version), surfaced
+/// so the UI can offer "roll back to vX.Y".
+#[derive(Debug, Clone, Serialize)]
+pub struct RollbackTarget {
+    pub source: String,
+    pub version: String,
+    pub channel: String,
+    pub tag: String,
+}
+
+/// Report the available kernel-rollback target, or None when there's nothing to
+/// roll back to (no retained backup binary, or no recorded previous version).
+#[tauri::command]
+pub async fn get_kernel_rollback(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+) -> Result<Option<RollbackTarget>, AppError> {
+    let base_dir = mgr.lock().await.base_dir.clone();
+    // A rollback needs BOTH the backup binary and the metadata describing it.
+    if !base_dir.join(CORE_PREV).exists() {
+        return Ok(None);
+    }
+    let target = installed_kernel(&base_dir)
+        .and_then(|k| k.previous)
+        .map(|p| RollbackTarget {
+            source: p.source,
+            version: p.version,
+            channel: p.channel,
+            tag: p.tag,
+        });
+    Ok(target)
+}
+
 /// Download the latest core for the selected source and stage it next to the
 /// live binary WITHOUT applying it. The core can stay running during the
 /// download; the swap + restart happens in `apply_staged_kernel` after the user
@@ -826,6 +1050,7 @@ pub async fn download_kernel(
                     channel: String::new(),
                     tag: format!("v{}", latest.version),
                     asset: latest.windows_asset.clone(),
+                    previous: None,
                 },
             )?;
 
@@ -862,6 +1087,7 @@ pub async fn download_kernel(
                     channel: channel.as_str().into(),
                     tag: rel.tag_name.clone(),
                     asset: asset_name,
+                    previous: None,
                 },
             )?;
 

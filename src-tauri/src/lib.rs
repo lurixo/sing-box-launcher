@@ -387,8 +387,11 @@ async fn apply_staged_kernel(
         }
         grp.lock().await.clear();
         let expected = m.staged_core_sha.clone();
-        core_update::apply_staged(&m.base_dir, expected.as_deref())?;
+        // apply_staged returns the sha of the core it set aside as the rollback
+        // backup; hold it in memory so a same-session rollback can re-verify.
+        let prev_sha = core_update::apply_staged(&m.base_dir, expected.as_deref())?;
         m.staged_core_sha = None;
+        m.prev_core_sha = prev_sha;
         running
     };
 
@@ -396,6 +399,46 @@ async fn apply_staged_kernel(
 
     if was_running {
         // Bring the core back up on the freshly installed kernel.
+        start_core(mgr, grp, app).await.map(|_| ())
+    } else {
+        let _ = app.emit("core-status-changed", mgr.lock().await.status());
+        Ok(())
+    }
+}
+
+/// Roll the kernel back to the retained previous version: stop the core, swap the
+/// backup into place (re-verified against the in-session anchor when present),
+/// then relaunch if it had been running. Mirrors `apply_staged_kernel`; the
+/// rollback is offered in the UI, never forced.
+#[tauri::command]
+async fn rollback_kernel(
+    mgr: tauri::State<'_, manager::Manager>,
+    grp: tauri::State<'_, groups::Groups>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let was_running = {
+        let mut m = mgr.lock().await;
+        m.refresh_running();
+        let running = m.running;
+        if m.proxy_enabled {
+            m.proxy_enabled = false;
+            let _ = proxy::set_system_proxy(false, "", "");
+        }
+        if m.running {
+            m.stop().await?;
+        }
+        grp.lock().await.clear();
+        let expected = m.prev_core_sha.clone();
+        // The swap returns the sha of the version we rolled away from (now the
+        // backup); re-anchor it so a roll-forward stays verifiable this session.
+        let new_prev_sha = core_update::rollback(&m.base_dir, expected.as_deref())?;
+        m.prev_core_sha = new_prev_sha;
+        running
+    };
+
+    tray::update_tray_icon(&app, false, false);
+
+    if was_running {
         start_core(mgr, grp, app).await.map(|_| ())
     } else {
         let _ = app.emit("core-status-changed", mgr.lock().await.status());
@@ -440,10 +483,34 @@ async fn apply_app_update(
         let m = mgr.lock().await;
         (m.base_dir.clone(), m.staged_app_sha.clone())
     };
-    app_update::apply_staged(&base_dir, expected.as_deref())?;
-    mgr.lock().await.staged_app_sha = None;
+    // apply_staged returns the sha of the exe it set aside as the rollback
+    // backup; hold it in memory so a same-session rollback can re-verify.
+    let prev_sha = app_update::apply_staged(&base_dir, expected.as_deref())?;
+    {
+        let mut m = mgr.lock().await;
+        m.staged_app_sha = None;
+        m.prev_app_sha = prev_sha;
+    }
     // New exe is in place and a relauncher is waiting on our exit; quit now
     // (honoring exit-core-on-close) so it can bring the new version up.
+    shutdown_and_exit(&app);
+    Ok(())
+}
+
+/// Roll the PORTABLE app back to the retained previous exe: swap the backup into
+/// place (re-verified against the in-session anchor when present), spawn the
+/// relauncher, then quit. Mirrors `apply_app_update`; offered, never forced.
+#[tauri::command]
+async fn rollback_app(
+    mgr: tauri::State<'_, manager::Manager>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let (base_dir, expected) = {
+        let m = mgr.lock().await;
+        (m.base_dir.clone(), m.prev_app_sha.clone())
+    };
+    let new_prev_sha = app_update::rollback_portable(&base_dir, expected.as_deref())?;
+    mgr.lock().await.prev_app_sha = new_prev_sha;
     shutdown_and_exit(&app);
     Ok(())
 }
@@ -471,6 +538,10 @@ async fn apply_installer_update(
     let expected = expected.ok_or_else(|| {
         AppError::Update("no verified installer staged; download it again".into())
     })?;
+    // Record the version we're replacing so a later rollback can re-download it.
+    // Written before spawn (while the local build-info still describes THIS
+    // version); whether it survives the NSIS reinstall is a real-machine caveat.
+    app_update::record_app_rollback(&base_dir);
     // Keep the deny-write/deny-delete handle (`_guard`) open across spawn so the
     // verified bytes are the executed bytes (closes the verify→execute TOCTOU).
     let (_guard, setup) = app_update::verify_staged_setup(&base_dir, &expected)?;
@@ -690,19 +761,24 @@ pub fn run() {
             core_update::get_core_info,
             core_update::check_core_update,
             core_update::get_staged_kernel,
+            core_update::get_kernel_rollback,
             core_update::download_kernel,
             apply_staged_kernel,
+            rollback_kernel,
             discard_staged_kernel,
             clear_kernel_cache,
             app_update::get_app_info,
             app_update::check_app_update,
             app_update::download_app_update,
             app_update::get_staged_app_update,
+            app_update::get_app_rollback,
             app_update::discard_app_update,
             app_update::open_releases_page,
             app_update::download_installer_update,
+            app_update::download_installer_rollback,
             apply_app_update,
             apply_installer_update,
+            rollback_app,
             elevation::is_admin,
         ])
         .setup(move |app| {

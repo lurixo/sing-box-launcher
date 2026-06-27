@@ -29,6 +29,17 @@ const BUILD_INFO_FILE: &str = "maestro-build-info.json";
 const APP_EXE: &str = "Maestro.exe";
 /// Staged-but-not-applied build-info (next to the live one in base_dir).
 const STAGED_BUILD_INFO: &str = "maestro-build-info.json.new";
+/// Durable rollback build-info for the PORTABLE build: paired with the retained
+/// `<exe>.prev`, so a rolled-back app reports the right version/built_at. Kept
+/// across sessions (never cleaned), unlike the transient `.old`/`.new`.
+const BUILD_INFO_PREV: &str = "maestro-build-info.json.prev";
+/// Transient for the build-info ↔ build-info.prev swap (cleaned next launch).
+const BUILD_INFO_SWAPTMP: &str = "maestro-build-info.json.swaptmp";
+/// Durable record of the version an INSTALLED build updated AWAY from, written
+/// just before running a new installer. An installed rollback re-downloads this
+/// version's `*-setup.exe` and runs it. Survival across the NSIS reinstall is the
+/// one real-machine caveat (see review notes); when absent, rollback is hidden.
+const APP_PREV_RECORD: &str = "maestro-app-prev.json";
 /// Staged-but-not-applied installer (`*-setup.exe`) for an installed build's
 /// self-update, kept in base_dir so `cleanup_leftovers` can drop it next launch
 /// (its in-memory integrity hash is gone after a restart).
@@ -125,15 +136,32 @@ async fn fetch_latest_release() -> Result<GhRelease, AppError> {
         .ok_or_else(|| AppError::Update("no app releases found".into()))
 }
 
-/// Pull the `maestro-build-info.json` asset of the newest release.
-async fn fetch_remote_build_info() -> Result<(AppBuildInfo, GhRelease), AppError> {
-    let rel = fetch_latest_release().await?;
+/// A SPECIFIC release by tag (e.g. `v0.3.1`) — used by the installed-build
+/// rollback to fetch the exact previous version's installer.
+async fn fetch_release_by_tag(tag: &str) -> Result<GhRelease, AppError> {
+    let url = format!("https://api.github.com/repos/{REPO}/releases/tags/{tag}");
+    let raw = http_client()
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| AppError::Update(format!("fetch release: {e}")))?
+        .error_for_status()
+        .map_err(|_| AppError::Update(format!("no release found for {tag}")))?
+        .text()
+        .await
+        .map_err(|e| AppError::Update(format!("read release: {e}")))?;
+    serde_json::from_str(&raw).map_err(|e| AppError::Update(format!("parse release: {e}")))
+}
+
+/// Download + parse the `maestro-build-info.json` asset of a given release.
+async fn build_info_of(rel: &GhRelease) -> Result<AppBuildInfo, AppError> {
     let url = {
         let asset = rel
             .assets
             .iter()
             .find(|a| a.name == BUILD_INFO_FILE)
-            .ok_or_else(|| AppError::Update("no maestro-build-info.json in latest release".into()))?;
+            .ok_or_else(|| AppError::Update("no maestro-build-info.json in release".into()))?;
         ensure_release_url(&asset.browser_download_url)?;
         asset.browser_download_url.clone()
     };
@@ -147,8 +175,13 @@ async fn fetch_remote_build_info() -> Result<(AppBuildInfo, GhRelease), AppError
         .text()
         .await
         .map_err(|e| AppError::Update(format!("read build info: {e}")))?;
-    let info: AppBuildInfo =
-        serde_json::from_str(&raw).map_err(|e| AppError::Update(format!("parse build info: {e}")))?;
+    serde_json::from_str(&raw).map_err(|e| AppError::Update(format!("parse build info: {e}")))
+}
+
+/// Pull the build-info of the newest release.
+async fn fetch_remote_build_info() -> Result<(AppBuildInfo, GhRelease), AppError> {
+    let rel = fetch_latest_release().await?;
+    let info = build_info_of(&rel).await?;
     Ok((info, rel))
 }
 
@@ -307,13 +340,37 @@ fn with_suffix(p: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Swap two paths, treating a missing file as a valid "absent" state, so the
+/// portable build-info stays paired with its binary across a rollback swap.
+/// Best-effort: the build-info is non-authoritative for safety, so a failed leg
+/// only risks a stale version display.
+fn swap_files(a: &Path, b: &Path, tmp: &Path) {
+    let _ = std::fs::remove_file(tmp);
+    if a.exists() {
+        let _ = std::fs::rename(a, tmp); // a -> tmp
+    }
+    if b.exists() {
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::rename(b, a); // b -> a
+    }
+    if tmp.exists() {
+        let _ = std::fs::remove_file(b);
+        let _ = std::fs::rename(tmp, b); // tmp -> b
+    }
+}
+
 // ─── apply / cleanup ─────────────────────────────────────────────────────────
 
 /// Swap the staged app binary into place and spawn a detached relauncher that
 /// waits for THIS process to exit, then starts the new exe. Windows permits
 /// renaming a running exe (it just can't be deleted/overwritten), so we move
-/// the live exe aside (.old, cleaned next launch) and the staged one in.
-pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<(), AppError> {
+/// the live exe aside and the staged one in.
+///
+/// The replaced exe is PROMOTED to the durable `<exe>.prev` slot (its build-info
+/// recorded too) so a portable build can roll back to it. Returns the sha256 of
+/// that retained backup — the in-memory anchor a same-session rollback re-checks
+/// it against.
+pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<Option<String>, AppError> {
     if is_installed(base_dir) {
         return Err(AppError::Update(
             "this is an installed build — update it by downloading the latest installer from \
@@ -349,12 +406,28 @@ pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<(), A
         return Err(AppError::Update(format!("install new exe: {e}")));
     }
 
-    // Swap the bundled build-info so the new run knows its own built_at. A
-    // single rename (Windows fs::rename replaces an existing file) keeps the old
-    // build-info intact if it fails, so we never end up with none.
+    // Promote the replaced exe to the durable rollback slot, and capture its sha
+    // so a same-session rollback can re-verify it (only one previous is kept).
+    let prev = with_suffix(&cur, ".prev");
+    let _ = std::fs::remove_file(&prev);
+    let prev_sha = if std::fs::rename(&old, &prev).is_ok() {
+        std::fs::read(&prev).ok().map(|b| sha256_hex(&b))
+    } else {
+        None
+    };
+
+    // Pair the outgoing build-info with the backup, then install the staged one.
+    // (Windows fs::rename replaces an existing file; a failed leg keeps the old
+    // build-info intact so we never end up with none.)
+    let prev_bi = base_dir.join(BUILD_INFO_PREV);
+    let _ = std::fs::remove_file(&prev_bi);
+    let cur_bi = build_info_path(base_dir);
+    if cur_bi.exists() {
+        let _ = std::fs::rename(&cur_bi, &prev_bi);
+    }
     let staged_bi = base_dir.join(STAGED_BUILD_INFO);
     if staged_bi.exists() {
-        let _ = std::fs::rename(&staged_bi, build_info_path(base_dir));
+        let _ = std::fs::rename(&staged_bi, &cur_bi);
     }
 
     if spawn_relauncher(&cur) {
@@ -362,7 +435,74 @@ pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<(), A
     } else {
         info!("app update applied; relauncher not spawned — manual restart needed");
     }
-    Ok(())
+    Ok(prev_sha)
+}
+
+/// Roll the PORTABLE app back to the retained previous exe: a symmetric swap of
+/// the running exe with `<exe>.prev` (and their build-info), so the rollback is
+/// itself reversible (roll-forward). Spawns the same detached relauncher as
+/// `apply_staged`; the caller quits afterward. `expected_prev_sha` is the
+/// in-session anchor — when present the backup is re-verified before it becomes
+/// the admin-run exe; absent (survived a restart) the swap proceeds, its
+/// integrity resting on the data dir's ACLs (residual, see review notes).
+/// Returns the sha of the new backup (the version rolled away from).
+pub fn rollback_portable(base_dir: &Path, expected_prev_sha: Option<&str>) -> Result<Option<String>, AppError> {
+    if is_installed(base_dir) {
+        return Err(AppError::Update(
+            "this is an installed build — roll back via the installer, not the exe swap".into(),
+        ));
+    }
+    let cur = std::env::current_exe().map_err(|e| AppError::Update(format!("current exe: {e}")))?;
+    let prev = with_suffix(&cur, ".prev");
+    if !prev.exists() {
+        return Err(AppError::Update("no previous version to roll back to".into()));
+    }
+    if let Some(expected) = expected_prev_sha {
+        let bytes = std::fs::read(&prev)
+            .map_err(|e| AppError::Update(format!("read previous exe: {e}")))?;
+        if !sha256_hex(&bytes).eq_ignore_ascii_case(expected) {
+            return Err(AppError::Update(
+                "previous version failed integrity check; rollback refused".into(),
+            ));
+        }
+    }
+    // Swap running exe <-> .prev through the shared transient (.old), so an
+    // interrupted rollback recovers via the same cleanup_leftovers path.
+    let old = with_suffix(&cur, ".old");
+    let _ = std::fs::remove_file(&old);
+    std::fs::rename(&cur, &old).map_err(|e| AppError::Update(format!("move running exe: {e}")))?;
+    if let Err(e) = std::fs::rename(&prev, &cur) {
+        let _ = std::fs::rename(&old, &cur);
+        return Err(AppError::Update(format!("restore previous exe: {e}")));
+    }
+    let new_prev_sha = if std::fs::rename(&old, &prev).is_ok() {
+        std::fs::read(&prev).ok().map(|b| sha256_hex(&b))
+    } else {
+        None
+    };
+
+    swap_files(
+        &build_info_path(base_dir),
+        &base_dir.join(BUILD_INFO_PREV),
+        &base_dir.join(BUILD_INFO_SWAPTMP),
+    );
+
+    if spawn_relauncher(&cur) {
+        info!("app rollback applied; relauncher spawned");
+    } else {
+        info!("app rollback applied; relauncher not spawned — manual restart needed");
+    }
+    Ok(new_prev_sha)
+}
+
+/// Snapshot the current build-info as the installed-build rollback record, just
+/// before a new installer replaces this version. No-op (best effort) if there's
+/// no local build-info to record.
+pub fn record_app_rollback(base_dir: &Path) {
+    let src = build_info_path(base_dir);
+    if src.exists() {
+        let _ = std::fs::copy(&src, base_dir.join(APP_PREV_RECORD));
+    }
 }
 
 /// Detached helper: poll until THIS process has fully exited, then start the new
@@ -396,13 +536,16 @@ fn spawn_relauncher(_exe: &Path) -> bool {
 /// Startup cleanup: drop a leftover `<exe>.old` from a completed self-update,
 /// plus any cross-session staged `<exe>.new` + build-info. A `.new` from a
 /// previous session can no longer be integrity-verified (its in-memory hash is
-/// gone), so it is discarded rather than re-prompted and trusted.
+/// gone), so it is discarded rather than re-prompted and trusted. The durable
+/// rollback backup (`<exe>.prev` + `BUILD_INFO_PREV`) and the installed-build
+/// rollback record are PRESERVED across sessions.
 pub fn cleanup_leftovers(base_dir: &Path) {
     if let Ok(cur) = std::env::current_exe() {
         let _ = std::fs::remove_file(with_suffix(&cur, ".old"));
         let _ = std::fs::remove_file(with_suffix(&cur, ".new"));
     }
     let _ = std::fs::remove_file(base_dir.join(STAGED_BUILD_INFO));
+    let _ = std::fs::remove_file(base_dir.join(BUILD_INFO_SWAPTMP));
     // A staged installer can't be re-verified after a restart (its in-memory sha
     // is gone), so drop it rather than trust it.
     let _ = std::fs::remove_file(base_dir.join(STAGED_SETUP));
@@ -505,6 +648,46 @@ pub async fn get_staged_app_update(
     Ok(staged)
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AppRollback {
+    pub version: String,
+    pub built_at: String,
+    /// installed build → rollback re-downloads + runs the previous setup.exe;
+    /// portable build → rollback swaps the retained `<exe>.prev` in place.
+    pub installed: bool,
+}
+
+/// Report the available app-rollback target, or None when there's nothing to roll
+/// back to. Installed build: the recorded previous version (re-downloaded on
+/// rollback). Portable build: the retained `<exe>.prev` (version read from the
+/// paired `BUILD_INFO_PREV`).
+#[tauri::command]
+pub async fn get_app_rollback(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+) -> Result<Option<AppRollback>, AppError> {
+    let base_dir = mgr.lock().await.base_dir.clone();
+    if is_installed(&base_dir) {
+        return Ok(read_app_rollback(&base_dir).map(|b| AppRollback {
+            version: b.version,
+            built_at: b.built_at,
+            installed: true,
+        }));
+    }
+    // Portable: the retained backup exe must be present.
+    let cur = std::env::current_exe().map_err(|e| AppError::Update(format!("current exe: {e}")))?;
+    if !with_suffix(&cur, ".prev").exists() {
+        return Ok(None);
+    }
+    let info = std::fs::read_to_string(base_dir.join(BUILD_INFO_PREV))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<AppBuildInfo>(&raw).ok());
+    Ok(Some(AppRollback {
+        version: info.as_ref().map(|b| b.version.clone()).unwrap_or_default(),
+        built_at: info.map(|b| b.built_at).unwrap_or_default(),
+        installed: false,
+    }))
+}
+
 #[tauri::command]
 pub async fn discard_app_update(
     mgr: tauri::State<'_, crate::manager::Manager>,
@@ -586,26 +769,17 @@ pub async fn download_app_update(
 
 // ─── Installed-build self-update (download + run a new NSIS setup.exe) ────────
 
-/// Download the newest release's `*-setup.exe`, verify its sha256 against the
-/// release build-info, and stage it in base_dir. The installer (not an in-place
-/// exe swap) is what installed builds run to upgrade — it carries the NSIS
-/// uninstall-and-reinstall logic that keeps the install registration intact.
-#[tauri::command]
-pub async fn download_installer_update(
-    mgr: tauri::State<'_, crate::manager::Manager>,
-    app: tauri::AppHandle,
+/// Download `remote`'s `*-setup.exe` from `rel`, verify its sha256 against the
+/// release build-info, stage it in base_dir, and record the verified hash in
+/// memory so apply can re-check the on-disk bytes. Shared by the forward update
+/// (latest release) and the rollback (a specific previous release by tag).
+async fn stage_installer(
+    mgr: &tauri::State<'_, crate::manager::Manager>,
+    app: &tauri::AppHandle,
+    base_dir: &Path,
+    remote: &AppBuildInfo,
+    rel: &GhRelease,
 ) -> Result<StagedApp, AppError> {
-    let base_dir = mgr.lock().await.base_dir.clone();
-    // This path is only for installed (NSIS) builds; the portable build swaps
-    // its own exe via download_app_update.
-    if !is_installed(&base_dir) {
-        return Err(AppError::Update(
-            "not an installed build — use the portable self-update".into(),
-        ));
-    }
-
-    emit_progress(&app, "checking", "Fetching latest Maestro release");
-    let (remote, rel) = fetch_remote_build_info().await?;
     // A missing installer hash means we cannot vouch for the setup.exe bytes —
     // refuse rather than run an unverified installer (it executes on the machine).
     if remote.windows_setup_sha256.is_empty() || remote.windows_setup_asset.is_empty() {
@@ -626,9 +800,9 @@ pub async fn download_installer_update(
         asset.browser_download_url.clone()
     };
 
-    let bytes = download_streamed(&app, &url, &remote.windows_setup_asset).await?;
+    let bytes = download_streamed(app, &url, &remote.windows_setup_asset).await?;
 
-    emit_progress(&app, "verifying", "Verifying checksum");
+    emit_progress(app, "verifying", "Verifying checksum");
     let actual = sha256_hex(&bytes);
     if !actual.eq_ignore_ascii_case(&remote.windows_setup_sha256) {
         return Err(AppError::Update(format!(
@@ -640,16 +814,74 @@ pub async fn download_installer_update(
     let setup_path = base_dir.join(STAGED_SETUP);
     let _ = std::fs::remove_file(&setup_path);
     std::fs::write(&setup_path, &bytes).map_err(|e| AppError::Update(format!("stage installer: {e}")))?;
-    // Keep the verified hash in-process so apply can re-check the on-disk setup
-    // (a non-elevated process could rewrite it) before running it.
     mgr.lock().await.staged_setup_sha = Some(actual);
 
-    emit_progress(&app, "done", &format!("Downloaded {}", remote.version));
-    info!(version = %remote.version, "installer update staged");
+    emit_progress(app, "done", &format!("Downloaded {}", remote.version));
     Ok(StagedApp {
-        version: remote.version,
-        built_at: remote.built_at,
+        version: remote.version.clone(),
+        built_at: remote.built_at.clone(),
     })
+}
+
+/// Download the newest release's `*-setup.exe`, verify its sha256 against the
+/// release build-info, and stage it in base_dir. The installer (not an in-place
+/// exe swap) is what installed builds run to upgrade — it carries the NSIS
+/// uninstall-and-reinstall logic that keeps the install registration intact.
+#[tauri::command]
+pub async fn download_installer_update(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    app: tauri::AppHandle,
+) -> Result<StagedApp, AppError> {
+    let base_dir = mgr.lock().await.base_dir.clone();
+    // This path is only for installed (NSIS) builds; the portable build swaps
+    // its own exe via download_app_update.
+    if !is_installed(&base_dir) {
+        return Err(AppError::Update(
+            "not an installed build — use the portable self-update".into(),
+        ));
+    }
+
+    emit_progress(&app, "checking", "Fetching latest Maestro release");
+    let (remote, rel) = fetch_remote_build_info().await?;
+    let staged = stage_installer(&mgr, &app, &base_dir, &remote, &rel).await?;
+    info!(version = %remote.version, "installer update staged");
+    Ok(staged)
+}
+
+/// Download the PREVIOUS installed version's `*-setup.exe` (the version recorded
+/// when the last in-app installer update ran) and stage it for an installed-build
+/// rollback. The exact release is located by tag (`v{version}`) so the recorded
+/// version is what's downloaded; its setup.exe is verified against THAT release's
+/// build-info before `apply_installer_update` runs it (`/P /R`, with
+/// `allowDowngrades` letting NSIS install the older version over the newer).
+#[tauri::command]
+pub async fn download_installer_rollback(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    app: tauri::AppHandle,
+) -> Result<StagedApp, AppError> {
+    let base_dir = mgr.lock().await.base_dir.clone();
+    if !is_installed(&base_dir) {
+        return Err(AppError::Update(
+            "not an installed build — use the portable rollback".into(),
+        ));
+    }
+    let prev = read_app_rollback(&base_dir)
+        .ok_or_else(|| AppError::Update("no previous version recorded to roll back to".into()))?;
+    let tag = format!("v{}", prev.version);
+
+    emit_progress(&app, "checking", &format!("Fetching Maestro {tag}"));
+    let rel = fetch_release_by_tag(&tag).await?;
+    // Use the OLD release's own build-info for the setup hash (not the local one).
+    let remote = build_info_of(&rel).await?;
+    let staged = stage_installer(&mgr, &app, &base_dir, &remote, &rel).await?;
+    info!(version = %remote.version, "installer rollback staged");
+    Ok(staged)
+}
+
+/// Read the installed-build rollback record (the version we updated away from).
+fn read_app_rollback(base_dir: &Path) -> Option<AppBuildInfo> {
+    let raw = std::fs::read_to_string(base_dir.join(APP_PREV_RECORD)).ok()?;
+    serde_json::from_str(&raw).ok()
 }
 
 /// Re-verify the staged installer against the in-memory hash and return BOTH the
