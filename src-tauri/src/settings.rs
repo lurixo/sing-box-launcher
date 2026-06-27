@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -91,6 +92,12 @@ pub struct AppSettings {
     /// greys the toggle and the backend gates the query on a non-lurixo kernel.
     #[serde(default)]
     pub outbound_ip_card: bool,
+    /// Per-config remembered system-proxy choice (config name -> on/off). A config
+    /// whose inbounds ask for the system proxy turns it on by default on its FIRST
+    /// launch; once the user toggles it in the GUI, that choice is stored here and
+    /// wins on every later start of that config (config intent = first-time only).
+    #[serde(default)]
+    pub proxy_overrides: HashMap<String, bool>,
 }
 
 impl Default for AppSettings {
@@ -110,6 +117,7 @@ impl Default for AppSettings {
             kernel_source: default_kernel_source(),
             kernel_channel: default_kernel_channel(),
             outbound_ip_card: false,
+            proxy_overrides: HashMap::new(),
         }
     }
 }

@@ -66,7 +66,26 @@ async fn start_core(
     let info = mgr.start().await?;
     let generation = mgr.generation;
 
-    tray::update_tray_icon(&app, true, false);
+    // System-proxy startup default (round-9 F): a config whose inbounds ask for
+    // the system proxy turns it on automatically — but ONLY as the first-launch
+    // default. Once the user has toggled it for this config, that remembered
+    // per-config choice wins over the config's own intent.
+    {
+        let settings = settings::load_settings(&mgr.base_dir);
+        let should = settings
+            .proxy_overrides
+            .get(&settings.active_config)
+            .copied()
+            .unwrap_or(info.wants_system_proxy);
+        if should && !mgr.proxy_enabled && !mgr.proxy_server.is_empty() {
+            let server = mgr.proxy_server.clone();
+            if proxy::set_system_proxy(true, &server, proxy::PROXY_BYPASS).is_ok() {
+                mgr.proxy_enabled = true;
+            }
+        }
+    }
+
+    tray::update_tray_icon(&app, true, mgr.proxy_enabled);
     let _ = app.emit("core-status-changed", mgr.status());
 
     // Load proxy groups in the background
@@ -232,6 +251,15 @@ async fn toggle_system_proxy(
     } else {
         proxy::set_system_proxy(true, &mgr.proxy_server, proxy::PROXY_BYPASS)?;
         mgr.proxy_enabled = true;
+    }
+
+    // Remember this per-config choice so it becomes the default on the next start
+    // of this config, overriding the config's own intent (round-9 F).
+    {
+        let mut settings = settings::load_settings(&mgr.base_dir);
+        let active = settings.active_config.clone();
+        settings.proxy_overrides.insert(active, mgr.proxy_enabled);
+        let _ = settings::save_settings(&mgr.base_dir, &settings);
     }
 
     tray::update_tray_icon(&app, true, mgr.proxy_enabled);
