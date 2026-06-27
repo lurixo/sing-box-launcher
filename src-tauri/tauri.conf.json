@@ -42,6 +42,7 @@
       "icons/icon.png"
     ],
     "windows": {
+      "allowDowngrades": true,
       "nsis": {
         "installMode": "currentUser",
         "languages": ["SimpChinese", "English"],

@@ -39,6 +39,9 @@ pub struct ManagerInner {
     /// bytes before swapping them into an admin-executed binary.
     pub staged_core_sha: Option<String>,
     pub staged_app_sha: Option<String>,
+    /// sha256 of the staged installer (`*-setup.exe`) for an installed build's
+    /// self-update — same in-memory integrity anchor as the others.
+    pub staged_setup_sha: Option<String>,
     started_at: Option<std::time::Instant>,
     logbus: LogBus,
 }
@@ -57,6 +60,7 @@ pub fn new_manager(base_dir: PathBuf, logbus: LogBus) -> Manager {
         generation: 0,
         staged_core_sha: None,
         staged_app_sha: None,
+        staged_setup_sha: None,
         started_at: None,
         logbus,
     }))

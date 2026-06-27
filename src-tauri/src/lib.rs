@@ -448,6 +448,41 @@ async fn apply_app_update(
     Ok(())
 }
 
+/// Apply a staged installer update (installed/NSIS builds): re-verify the
+/// downloaded setup.exe against the in-memory hash, spawn it in passive mode
+/// (`/P /R` — small progress window, auto-relaunch), then quit so the installer
+/// can replace the running install. The installer carries its own uninstall-and-
+/// reinstall logic; Maestro does NOT swap its own exe for installed builds.
+#[tauri::command]
+async fn apply_installer_update(
+    mgr: tauri::State<'_, manager::Manager>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    let (base_dir, expected) = {
+        let m = mgr.lock().await;
+        (m.base_dir.clone(), m.staged_setup_sha.clone())
+    };
+    // Re-assert this is an installed build (symmetry with apply_staged's guard)
+    // and require the in-memory integrity anchor — never run an installer we did
+    // not verify this session.
+    if !app_update::is_installed(&base_dir) {
+        return Err(AppError::Update("not an installed build".into()));
+    }
+    let expected = expected.ok_or_else(|| {
+        AppError::Update("no verified installer staged; download it again".into())
+    })?;
+    // Keep the deny-write/deny-delete handle (`_guard`) open across spawn so the
+    // verified bytes are the executed bytes (closes the verify→execute TOCTOU).
+    let (_guard, setup) = app_update::verify_staged_setup(&base_dir, &expected)?;
+    app_update::spawn_installer(&setup)?;
+    drop(_guard);
+    mgr.lock().await.staged_setup_sha = None;
+    // The installer waits for us to exit (CheckIfAppIsRunning) and then `/R`
+    // relaunches the upgraded app.
+    shutdown_and_exit(&app);
+    Ok(())
+}
+
 /// Disable the system proxy, stop the core, and exit the process. Shared by
 /// every quit path: the tray Quit item and the window-close handler when the
 /// user has not opted to minimize to tray.
@@ -665,7 +700,9 @@ pub fn run() {
             app_update::get_staged_app_update,
             app_update::discard_app_update,
             app_update::open_releases_page,
+            app_update::download_installer_update,
             apply_app_update,
+            apply_installer_update,
             elevation::is_admin,
         ])
         .setup(move |app| {

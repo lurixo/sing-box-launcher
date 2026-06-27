@@ -29,6 +29,10 @@ const BUILD_INFO_FILE: &str = "maestro-build-info.json";
 const APP_EXE: &str = "Maestro.exe";
 /// Staged-but-not-applied build-info (next to the live one in base_dir).
 const STAGED_BUILD_INFO: &str = "maestro-build-info.json.new";
+/// Staged-but-not-applied installer (`*-setup.exe`) for an installed build's
+/// self-update, kept in base_dir so `cleanup_leftovers` can drop it next launch
+/// (its in-memory integrity hash is gone after a restart).
+const STAGED_SETUP: &str = "maestro-update-setup.exe";
 /// Distribution-channel marker bundled into the data dir. Only the NSIS
 /// installer ships it (contents "installer"); the portable build has none.
 const CHANNEL_FILE: &str = "CHANNEL";
@@ -55,6 +59,13 @@ pub struct AppBuildInfo {
     pub windows_asset: String,
     #[serde(default)]
     pub windows_sha256: String,
+    /// The published `*-setup.exe` asset name + its sha256, used by installed
+    /// (NSIS) builds to verify the installer they download. `#[serde(default)]`
+    /// keeps older releases (which lacked these) parseable.
+    #[serde(default)]
+    pub windows_setup_asset: String,
+    #[serde(default)]
+    pub windows_setup_sha256: String,
     #[serde(default)]
     pub built_at: String,
     #[serde(default)]
@@ -211,6 +222,37 @@ async fn download_bytes(url: &str) -> Result<Vec<u8>, AppError> {
     Ok(bytes.to_vec())
 }
 
+/// Download with live byte-progress emitted to the UI (mirrors core_update's
+/// streaming download). Uses `Response::chunk()` — no stream feature/dependency
+/// — and throttles progress events to ~every 512 KB.
+async fn download_streamed(app: &tauri::AppHandle, url: &str, label: &str) -> Result<Vec<u8>, AppError> {
+    let mut resp = http_client()
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| AppError::Update(format!("download update: {e}")))?
+        .error_for_status()
+        .map_err(|e| AppError::Update(format!("download http: {e}")))?;
+    let total = resp.content_length();
+    let mut buf: Vec<u8> = Vec::with_capacity(total.unwrap_or(0) as usize);
+    let mut received: u64 = 0;
+    let mut last_emit: u64 = 0;
+    emit_download_progress(app, label, 0, total);
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| AppError::Update(format!("read download: {e}")))?
+    {
+        buf.extend_from_slice(&chunk);
+        received += chunk.len() as u64;
+        if received - last_emit >= 512 * 1024 || Some(received) == total {
+            last_emit = received;
+            emit_download_progress(app, label, received, total);
+        }
+    }
+    Ok(buf)
+}
+
 fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
@@ -241,6 +283,20 @@ fn emit_progress(app: &tauri::AppHandle, stage: &str, message: &str) {
     let _ = app.emit(
         "app-update-progress",
         serde_json::json!({ "stage": stage, "message": message }),
+    );
+}
+
+/// Like `emit_progress` but carries byte counts so the UI can draw a real
+/// progress bar. `total` is None when the server sends no Content-Length.
+fn emit_download_progress(app: &tauri::AppHandle, label: &str, received: u64, total: Option<u64>) {
+    let _ = app.emit(
+        "app-update-progress",
+        serde_json::json!({
+            "stage": "downloading",
+            "message": format!("Downloading {label}"),
+            "received": received,
+            "total": total,
+        }),
     );
 }
 
@@ -347,6 +403,9 @@ pub fn cleanup_leftovers(base_dir: &Path) {
         let _ = std::fs::remove_file(with_suffix(&cur, ".new"));
     }
     let _ = std::fs::remove_file(base_dir.join(STAGED_BUILD_INFO));
+    // A staged installer can't be re-verified after a restart (its in-memory sha
+    // is gone), so drop it rather than trust it.
+    let _ = std::fs::remove_file(base_dir.join(STAGED_SETUP));
 }
 
 // ─── IPC Commands ────────────────────────────────────────────────────────────
@@ -455,6 +514,7 @@ pub async fn discard_app_update(
         let _ = std::fs::remove_file(with_suffix(&cur, ".new"));
     }
     let _ = std::fs::remove_file(base_dir.join(STAGED_BUILD_INFO));
+    let _ = std::fs::remove_file(base_dir.join(STAGED_SETUP));
     Ok(())
 }
 
@@ -522,4 +582,133 @@ pub async fn download_app_update(
         version: remote.version,
         built_at: remote.built_at,
     })
+}
+
+// ─── Installed-build self-update (download + run a new NSIS setup.exe) ────────
+
+/// Download the newest release's `*-setup.exe`, verify its sha256 against the
+/// release build-info, and stage it in base_dir. The installer (not an in-place
+/// exe swap) is what installed builds run to upgrade — it carries the NSIS
+/// uninstall-and-reinstall logic that keeps the install registration intact.
+#[tauri::command]
+pub async fn download_installer_update(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    app: tauri::AppHandle,
+) -> Result<StagedApp, AppError> {
+    let base_dir = mgr.lock().await.base_dir.clone();
+    // This path is only for installed (NSIS) builds; the portable build swaps
+    // its own exe via download_app_update.
+    if !is_installed(&base_dir) {
+        return Err(AppError::Update(
+            "not an installed build — use the portable self-update".into(),
+        ));
+    }
+
+    emit_progress(&app, "checking", "Fetching latest Maestro release");
+    let (remote, rel) = fetch_remote_build_info().await?;
+    // A missing installer hash means we cannot vouch for the setup.exe bytes —
+    // refuse rather than run an unverified installer (it executes on the machine).
+    if remote.windows_setup_sha256.is_empty() || remote.windows_setup_asset.is_empty() {
+        return Err(AppError::Update(
+            "release build-info has no installer checksum; refusing to update".into(),
+        ));
+    }
+    let url = {
+        let asset = rel
+            .assets
+            .iter()
+            .find(|a| a.name == remote.windows_setup_asset)
+            .ok_or_else(|| {
+                AppError::Update(format!("release asset {} not found", remote.windows_setup_asset))
+            })?;
+        // Pin to the exact lurixo/Maestro release-download path (not just the host).
+        ensure_release_url(&asset.browser_download_url)?;
+        asset.browser_download_url.clone()
+    };
+
+    let bytes = download_streamed(&app, &url, &remote.windows_setup_asset).await?;
+
+    emit_progress(&app, "verifying", "Verifying checksum");
+    let actual = sha256_hex(&bytes);
+    if !actual.eq_ignore_ascii_case(&remote.windows_setup_sha256) {
+        return Err(AppError::Update(format!(
+            "checksum mismatch: expected {}, got {actual}",
+            remote.windows_setup_sha256
+        )));
+    }
+
+    let setup_path = base_dir.join(STAGED_SETUP);
+    let _ = std::fs::remove_file(&setup_path);
+    std::fs::write(&setup_path, &bytes).map_err(|e| AppError::Update(format!("stage installer: {e}")))?;
+    // Keep the verified hash in-process so apply can re-check the on-disk setup
+    // (a non-elevated process could rewrite it) before running it.
+    mgr.lock().await.staged_setup_sha = Some(actual);
+
+    emit_progress(&app, "done", &format!("Downloaded {}", remote.version));
+    info!(version = %remote.version, "installer update staged");
+    Ok(StagedApp {
+        version: remote.version,
+        built_at: remote.built_at,
+    })
+}
+
+/// Re-verify the staged installer against the in-memory hash and return BOTH the
+/// path AND an open read handle. The handle is opened denying write+delete
+/// sharing (Windows `FILE_SHARE_READ` only) and the caller MUST keep it alive
+/// across `spawn_installer` — that is what closes the verify→execute TOCTOU: with
+/// the deny-write/deny-delete handle held, no other (lower-privileged) process
+/// can swap or delete the file between this hash and CreateProcess, so the bytes
+/// verified here are provably the bytes executed. `expected_sha` is mandatory: a
+/// staged installer with no in-memory anchor is refused, never run unverified.
+pub fn verify_staged_setup(base_dir: &Path, expected_sha: &str) -> Result<(std::fs::File, PathBuf), AppError> {
+    let setup = base_dir.join(STAGED_SETUP);
+    if !setup.exists() {
+        return Err(AppError::Update("no downloaded installer to apply".into()));
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x0000_0001; // deny FILE_SHARE_WRITE + FILE_SHARE_DELETE
+        opts.share_mode(FILE_SHARE_READ);
+    }
+    let mut f = opts
+        .open(&setup)
+        .map_err(|e| AppError::Update(format!("open staged installer: {e}")))?;
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes)
+        .map_err(|e| AppError::Update(format!("read staged installer: {e}")))?;
+    if !sha256_hex(&bytes).eq_ignore_ascii_case(expected_sha) {
+        drop(f);
+        let _ = std::fs::remove_file(&setup);
+        return Err(AppError::Update(
+            "staged installer failed integrity check; discarded".into(),
+        ));
+    }
+    Ok((f, setup))
+}
+
+/// Run the staged NSIS installer in passive mode and detach it. `/P` shows a
+/// small progress window (NOT silent — `/S` can hang on a non-silent uninstaller
+/// during upgrade), `/R` relaunches Maestro once install completes. The installer
+/// waits for this process to exit (CheckIfAppIsRunning) before swapping files.
+///
+/// IMPORTANT: detached but WITHOUT `CREATE_NO_WINDOW` — passive mode needs to
+/// show its progress UI, and we want the user to see the upgrade running.
+#[cfg(target_os = "windows")]
+pub fn spawn_installer(setup: &Path) -> Result<(), AppError> {
+    use std::os::windows::process::CommandExt;
+    const DETACHED_PROCESS: u32 = 0x00000008;
+    std::process::Command::new(setup)
+        .args(["/P", "/R"])
+        .creation_flags(DETACHED_PROCESS)
+        .spawn()
+        .map_err(|e| AppError::Update(format!("run installer: {e}")))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn spawn_installer(_setup: &Path) -> Result<(), AppError> {
+    Err(AppError::Update("installer update is Windows-only".into()))
 }
