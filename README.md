@@ -15,7 +15,7 @@
 - 🎛️ **One-click core control** — start, stop, and restart sing-box with automatic config injection; live status, uptime, and outbound IP at a glance.
 - 🔀 **Switchable kernel sources** — ship-bundled **lurixo** by default, or pull builds on demand from **SagerNet** or **reF1nd**, all from inside the app.
 - ⬆️ **Self-updating** — the portable build updates itself (timestamp-based, SHA-256 verified, restart-and-swap); the kernel updates independently, on your confirmation.
-- 📈 **Live traffic overview** — upload and download on a single shared-axis chart, plus connection count, core memory, and cumulative totals.
+- 📈 **Live traffic overview** — upload and download on a single shared-axis chart, plus connection count, memory (Maestro + core), and cumulative totals.
 - 🪵 **Privacy-first logs** — kept in memory only, **never written to disk**; export just the lines you pick (redacted), with a one-shot sanitized crash dump only if something actually crashes.
 - 🌐 **System proxy in one click** — toggle the Windows system proxy via the registry; clear warning when a config is TUN-only.
 - 🟢 **Color-coded tray** — the tray icon shows state at a glance: **gray** (stopped), **green** (running), **blue** (running + system proxy on).
@@ -42,7 +42,7 @@
 - Installed (setup.exe) builds intentionally don't self-update; they point you to the latest installer instead.
 
 **Monitoring**
-- Traffic overview chart combining upload + download on one shared axis, with live speeds, active connection count, core memory usage, and cumulative up/down totals.
+- Traffic overview chart combining upload + download on one shared axis, with live speeds, active connection count, memory usage (Maestro + core), and cumulative up/down totals.
 - Outbound IP shown inline — click to copy.
 
 **Privacy & diagnostics**
