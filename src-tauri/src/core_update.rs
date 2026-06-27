@@ -260,6 +260,16 @@ fn meta_path(base_dir: &Path) -> PathBuf {
     base_dir.join(KERNEL_META_FILE)
 }
 
+/// Whether the INSTALLED kernel is a lurixo build. The outbound-IP trace
+/// (`OutboundTrace` gRPC) is a lurixo-specific capability, so the IP card is only
+/// offered + queried on a lurixo kernel. Returns false when no kernel metadata is
+/// present at all (nothing to trace), erring toward NOT querying a third party.
+pub fn is_lurixo_kernel(base_dir: &Path) -> bool {
+    installed_kernel(base_dir)
+        .map(|k| k.source == "lurixo")
+        .unwrap_or(false)
+}
+
 /// The kernel currently installed: prefer our own metadata file, else fall back
 /// to the bundled lurixo build-info (first launch, before any in-app update).
 fn installed_kernel(base_dir: &Path) -> Option<InstalledKernel> {
@@ -634,24 +644,10 @@ pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<Optio
         None
     };
 
-    // Pair the replaced core's build-info with the backup: move the outgoing
-    // build-info to `.prev`, then install the staged one (lurixo sources stage a
-    // build-info; SagerNet/reF1nd don't, leaving the live build-info absent).
-    let prev_bi = base_dir.join(BUILD_INFO_PREV);
-    let _ = std::fs::remove_file(&prev_bi);
-    let cur_bi = build_info_path(base_dir);
-    if cur_bi.exists() {
-        let _ = std::fs::rename(&cur_bi, &prev_bi);
-    }
-    let staged_bi = base_dir.join(STAGED_BUILD_INFO);
-    if staged_bi.exists() {
-        std::fs::rename(&staged_bi, &cur_bi)
-            .map_err(|e| AppError::Update(format!("apply build info: {e}")))?;
-    }
-
-    // Write the new metadata with the retained previous recorded. (If there's no
-    // staged meta — shouldn't happen, download always writes one — leave the old
-    // meta in place rather than fabricate one.)
+    // Metadata is the source of truth for the displayed version, so write it
+    // FIRST as the only hard `?` after the binary lands: a swapped-in core must
+    // never be left mislabeled. (If there's no staged meta — shouldn't happen,
+    // download always writes one — leave the old meta rather than fabricate one.)
     let staged_meta = base_dir.join(STAGED_META);
     if staged_meta.exists() {
         let raw = std::fs::read_to_string(&staged_meta)
@@ -664,6 +660,23 @@ pub fn apply_staged(base_dir: &Path, expected_sha: Option<&str>) -> Result<Optio
         std::fs::write(meta_path(base_dir), out)
             .map_err(|e| AppError::Update(format!("apply kernel meta: {e}")))?;
         let _ = std::fs::remove_file(&staged_meta);
+    }
+
+    // Pair the replaced core's build-info with the backup: move the outgoing
+    // build-info to `.prev`, then install the staged one (lurixo sources stage a
+    // build-info; SagerNet/reF1nd don't, leaving the live build-info absent).
+    // BEST-EFFORT: the build-info is non-authoritative (metadata above drives the
+    // UI), so a rare non-crash IO failure here (AV lock / ENOSPC) must NOT fail
+    // the apply and mislabel the freshly-swapped core — just leave the pairing.
+    let prev_bi = base_dir.join(BUILD_INFO_PREV);
+    let _ = std::fs::remove_file(&prev_bi);
+    let cur_bi = build_info_path(base_dir);
+    if cur_bi.exists() {
+        let _ = std::fs::rename(&cur_bi, &prev_bi);
+    }
+    let staged_bi = base_dir.join(STAGED_BUILD_INFO);
+    if staged_bi.exists() {
+        let _ = std::fs::rename(&staged_bi, &cur_bi);
     }
     Ok(prev_sha)
 }

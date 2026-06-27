@@ -85,6 +85,12 @@ pub struct AppSettings {
     /// or "dev" (highest pre-release). Ignored by lurixo (single pipeline).
     #[serde(default = "default_kernel_channel")]
     pub kernel_channel: String,
+    /// Show the Dashboard's outbound-IP card. Default OFF: the card has the core
+    /// query a third-party geo-IP service through the proxy, so it is opt-in. Only
+    /// meaningful on a lurixo kernel (OutboundTrace is lurixo-specific); the UI
+    /// greys the toggle and the backend gates the query on a non-lurixo kernel.
+    #[serde(default)]
+    pub outbound_ip_card: bool,
 }
 
 impl Default for AppSettings {
@@ -103,6 +109,7 @@ impl Default for AppSettings {
             disable_gpu_compositing: false,
             kernel_source: default_kernel_source(),
             kernel_channel: default_kernel_channel(),
+            outbound_ip_card: false,
         }
     }
 }
@@ -257,6 +264,17 @@ pub async fn set_kernel_source(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.kernel_source = source;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_outbound_ip_card(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.outbound_ip_card = enabled;
     save_settings(&mgr.base_dir, &settings)
 }
 

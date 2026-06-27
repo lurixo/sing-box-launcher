@@ -277,8 +277,18 @@ async fn test_group_delay(
 
 #[tauri::command]
 async fn get_outbound_ip(
+    mgr: tauri::State<'_, manager::Manager>,
     grp: tauri::State<'_, groups::Groups>,
 ) -> Result<Vec<native_api::OutboundIpInfo>, AppError> {
+    // Privacy gate (defense-in-depth; the UI also skips the call): the outbound-IP
+    // card is opt-in AND only works on a lurixo kernel. When the toggle is off or
+    // the installed kernel isn't lurixo, fire NO OutboundTrace gRPC / third-party
+    // request — just return an empty result.
+    let base_dir = mgr.lock().await.base_dir.clone();
+    let settings = settings::load_settings(&base_dir);
+    if !settings.outbound_ip_card || !core_update::is_lurixo_kernel(&base_dir) {
+        return Ok(Vec::new());
+    }
     let client = {
         let grp = grp.lock().await;
         grp.client
@@ -756,6 +766,7 @@ pub fn run() {
             settings::set_disable_gpu_compositing,
             settings::set_kernel_source,
             settings::set_kernel_channel,
+            settings::set_outbound_ip_card,
             logbus::get_logs,
             logbus::clear_logs,
             logbus::export_logs,
