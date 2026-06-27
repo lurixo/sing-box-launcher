@@ -199,6 +199,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ loading: true, error: null });
     const win = getCurrentWindow();
     try {
+      // Respect the user's system-proxy choice across the restart: stop_core
+      // turns it off, so remember whether it was on and turn it back on once the
+      // core is up again (only if the new config still exposes a proxy server).
+      const wasProxy = get().status.proxy_enabled;
       // Visible restart: clearly show the app "exit" (stop core + hide window),
       // a perceptible pause, then bring it back (start core + raise window) —
       // so the user sees two distinct phases rather than an instant swap.
@@ -208,7 +212,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       await win.hide();                                // visible exit
       await new Promise((r) => setTimeout(r, 1500));   // perceptible gap
       await invoke<ConfigInfo>("start_core");
-      const status = await invoke<CoreStatus>("get_status");
+      let status = await invoke<CoreStatus>("get_status");
+      if (wasProxy && status.proxy_server && !status.proxy_enabled) {
+        try {
+          await invoke("toggle_system_proxy");
+          status = await invoke<CoreStatus>("get_status");
+        } catch { /* new config may be TUN-only — leave proxy off */ }
+      }
       set({ status, loading: false });
       try {
         await win.unminimize(); await win.show(); await win.setFocus();

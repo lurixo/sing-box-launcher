@@ -16,6 +16,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
+import { useAppStore } from "../stores/appStore";
 import { JsonEditor, type JsonEditorHandle } from "../components/JsonEditor";
 import type { ConfigEntry, CheckResult } from "../types";
 
@@ -29,6 +30,9 @@ function parseErrorLine(msg: string): number | null {
 export function Config() {
   const t = useT();
   const revealRef = useReveal<HTMLDivElement>();
+  const running = useAppStore((s) => s.status.running);
+  const restartCore = useAppStore((s) => s.restartCore);
+  const [showRestart, setShowRestart] = useState(false);
 
   const [configs, setConfigs] = useState<ConfigEntry[]>([]);
   const [editingName, setEditingName] = useState<string | null>(null);
@@ -138,9 +142,18 @@ export function Config() {
       await invoke("set_active_config", { name });
       await loadConfigList();
       setConfigMsg({ type: "ok", text: t("dashboard.activeMsg", { name }) });
+      // A config switch only takes effect after a core restart. Offer it when
+      // the core is running; if stopped, the new active config applies on start.
+      if (running) setShowRestart(true);
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
+  };
+
+  const handleConfirmRestart = async () => {
+    setShowRestart(false);
+    setConfigMsg({ type: "ok", text: t("config.restarting") });
+    await restartCore();
   };
 
   const startCreate = () => { setEditingName(null); setCreating(true); setNewName(""); };
@@ -509,6 +522,35 @@ export function Config() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Restart-to-apply confirm: shown after activating a config while the
+          core is running (a switch only takes effect on restart). */}
+      {showRestart && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div className="fluent-card" style={{ width: 360, padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+              {t("config.restartTitle")}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              {t("config.restartBody")}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button className="fluent-btn reveal-target" onClick={() => setShowRestart(false)} style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}>
+                {t("config.restartLater")}
+              </button>
+              <button className="fluent-btn accent reveal-target" onClick={handleConfirmRestart} style={{ fontSize: 13, minHeight: 32, padding: "4px 16px" }}>
+                {t("config.restartNow")}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
