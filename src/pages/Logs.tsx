@@ -51,6 +51,11 @@ export function Logs() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [exportMsg, setExportMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Drag-select state, declared up here so the tail-follow effect can pause while
+  // a drag is live. dragRef holds the anchor seq + add/remove mode; autoScrollRef
+  // tracks edge auto-scroll during a drag (round-10 #3).
+  const dragRef = useRef<{ anchor: number; mode: boolean } | null>(null);
+  const autoScrollRef = useRef<{ y: number; raf: number } | null>(null);
 
   // Seed the display filter from the persisted preference. The core always logs
   // at full (trace) detail; this switch only filters what the view renders.
@@ -120,7 +125,9 @@ export function Logs() {
   );
 
   useEffect(() => {
-    if (autoScroll && scrollRef.current) {
+    // Don't tail-follow while a drag-select is live (round-10 #3): it would yank
+    // the viewport to the bottom and fight the edge auto-scroll.
+    if (autoScroll && !dragRef.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [visible, autoScroll]);
@@ -196,12 +203,32 @@ export function Logs() {
   // Copy every currently-visible line (respects the source tab + level filter).
   const handleCopyAll = () => copyText(visible.map(fmtLine).join("\n"));
 
+  // Standard shortcuts on the log view (round-10 #4): Ctrl/Cmd+A selects all
+  // visible rows, Ctrl/Cmd+C copies the selected rows (or all visible if none are
+  // selected). Ignored while a form field has focus so it never hijacks them.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      const k = e.key.toLowerCase();
+      if (k === "a") {
+        e.preventDefault();
+        setSelected(new Set(visible.map((l) => l.seq)));
+      } else if (k === "c") {
+        const rows = selected.size ? visible.filter((l) => selected.has(l.seq)) : visible;
+        if (rows.length) { e.preventDefault(); copyText(rows.map(fmtLine).join("\n")); }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [visible, selected]);
+
   // Drag-to-select (round-9 B): a vertical mouse drag over the rows ticks/unticks
   // each row's export checkbox as the cursor covers it — NO text highlight. The
   // anchor row's current state picks the mode (check when it wasn't selected,
   // else uncheck), applied to the whole [anchor..cursor] seq range.
-  const dragRef = useRef<{ anchor: number; mode: boolean } | null>(null);
-
   const rowSeqAt = (target: EventTarget | null): number | null => {
     const el = (target as HTMLElement | null)?.closest?.(".log-row[data-seq]") as HTMLElement | null;
     if (!el) return null;
@@ -233,13 +260,51 @@ export function Logs() {
     applyDragRange(seq, seq, mode);
   };
 
+  const stopAutoScroll = () => {
+    if (autoScrollRef.current) {
+      cancelAnimationFrame(autoScrollRef.current.raf);
+      autoScrollRef.current = null;
+    }
+  };
+
+  // Runs each frame while the cursor is held near a viewport edge during a drag:
+  // scroll a step, then extend the selection to whatever row is now under it.
+  const edgeScrollTick = () => {
+    const el = scrollRef.current;
+    const drag = dragRef.current;
+    const st = autoScrollRef.current;
+    if (!el || !drag || !st) { stopAutoScroll(); return; }
+    const rect = el.getBoundingClientRect();
+    const EDGE = 28;
+    let dy = 0;
+    if (st.y < rect.top + EDGE) dy = -Math.max(4, (rect.top + EDGE - st.y) / 2);
+    else if (st.y > rect.bottom - EDGE) dy = Math.max(4, (st.y - (rect.bottom - EDGE)) / 2);
+    if (dy === 0) { stopAutoScroll(); return; }
+    el.scrollTop += dy;
+    const seq = rowSeqAt(document.elementFromPoint(rect.left + 24, st.y));
+    if (seq != null) applyDragRange(drag.anchor, seq, drag.mode);
+    st.raf = requestAnimationFrame(edgeScrollTick);
+  };
+
   const onBodyMouseMove = (e: ReactMouseEvent) => {
     if (!dragRef.current) return;
     const cur = rowSeqAt(e.target);
     if (cur != null) applyDragRange(dragRef.current.anchor, cur, dragRef.current.mode);
+    // Arm / disarm edge auto-scroll based on the cursor's distance to an edge.
+    const el = scrollRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const EDGE = 28;
+    const nearEdge = e.clientY < rect.top + EDGE || e.clientY > rect.bottom - EDGE;
+    if (nearEdge) {
+      if (autoScrollRef.current) autoScrollRef.current.y = e.clientY;
+      else autoScrollRef.current = { y: e.clientY, raf: requestAnimationFrame(edgeScrollTick) };
+    } else {
+      stopAutoScroll();
+    }
   };
 
-  const endDrag = () => { dragRef.current = null; };
+  const endDrag = () => { dragRef.current = null; stopAutoScroll(); };
 
   const tabBtn = (id: "core" | "app", label: string) => (
     <button
@@ -332,7 +397,10 @@ export function Logs() {
             onClick={handleExport}
             disabled={selected.size === 0}
             title={t("logs.exportHint")}
-            style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", whiteSpace: "nowrap", opacity: selected.size === 0 ? 0.5 : 1 }}
+            // Fixed width so the label flipping between "导出" and "导出 (N)" as the
+            // selection count ticks (esp. during a drag-select) can't resize the
+            // button every frame — that width jitter read as a scale animation.
+            style={{ fontSize: 12, minHeight: 30, padding: "4px 12px", whiteSpace: "nowrap", minWidth: 128, justifyContent: "center", opacity: selected.size === 0 ? 0.5 : 1 }}
           >
             <ArrowDownloadRegular style={{ fontSize: 14 }} />
             {selected.size ? t("logs.exportN", { count: selected.size }) : t("logs.export")}
@@ -353,12 +421,16 @@ export function Logs() {
       {exportMsg && (
         <div
           style={{
-            position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
-            zIndex: 2000, padding: "8px 16px", borderRadius: "var(--radius-md)",
-            background: exportMsg.ok ? "var(--status-success-bg)" : "var(--status-danger-bg)",
+            position: "fixed", bottom: 24, right: 24, zIndex: 2000,
+            padding: "10px 16px", borderRadius: "var(--radius-md)", maxWidth: "60%",
+            // Opaque card background (not the 8%-alpha status tint) so log text
+            // behind it never bleeds through; the status colour is carried by the
+            // border + a thicker left accent. Bottom-right so it clears the rows.
+            background: "var(--bg-card)",
             border: `1px solid ${exportMsg.ok ? "var(--status-success)" : "var(--status-danger)"}`,
+            borderLeft: `3px solid ${exportMsg.ok ? "var(--status-success)" : "var(--status-danger)"}`,
             color: "var(--text-primary)", fontSize: 13, pointerEvents: "none",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.22)",
+            boxShadow: "var(--shadow-dialog)",
           }}
         >
           {exportMsg.text}
