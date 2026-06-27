@@ -124,7 +124,9 @@ export function Settings() {
   const [closeToTray, setCloseToTray] = useState(true);
   const [exitCoreOnClose, setExitCoreOnClose] = useState(true);
   const [autoStartCore, setAutoStartCore] = useState(true);
-  const [outboundIpCard, setOutboundIpCard] = useState(false);
+  // null = unset → follows the kernel default (on for lurixo); a boolean is the
+  // user's explicit choice. Mirrors AppSettings.outbound_ip_card (round-10 #10).
+  const [outboundIpCard, setOutboundIpCard] = useState<boolean | null>(null);
   const [startupDelay, setStartupDelay] = useState(30);
 
   // ─── UWP state ───────────────────────────────────────────────────
@@ -326,6 +328,14 @@ export function Settings() {
     const id = setTimeout(() => setCoreMsg(null), 4000);
     return () => clearTimeout(id);
   }, [coreMsg]);
+
+  // App-update notices (checking / up-to-date / discarded) auto-clear the same
+  // way; only errors linger. Without this the app "已是最新" toast never left.
+  useEffect(() => {
+    if (!appMsg || appMsg.type === "err") return;
+    const id = setTimeout(() => setAppMsg(null), 4000);
+    return () => clearTimeout(id);
+  }, [appMsg]);
 
   const handleAutostartToggle = async (val: boolean) => {
     try {
@@ -751,7 +761,7 @@ export function Settings() {
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{t("settings.outboundIpCardDesc")}</div>
           </div>
           <ToggleSwitch
-            checked={coreInfo?.source === "lurixo" && outboundIpCard}
+            checked={coreInfo?.source === "lurixo" && (outboundIpCard ?? true)}
             onChange={handleOutboundIpCard}
             disabled={coreInfo?.source !== "lurixo"}
           />
