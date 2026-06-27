@@ -101,12 +101,20 @@ function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
 
   if (!running || lines.length === 0) return null;
 
+  // IPv4 on the first line, IPv6 on the second. Each line keeps its OWN flag,
+  // ASN and IP — the two families can exit via different regions/networks, so
+  // nothing is shared between rows.
+  const isV6 = (ip: string) => ip.includes(":");
+  const ordered = [...lines].sort((a, b) => Number(isV6(a.ip)) - Number(isV6(b.ip)));
+  const dual = ordered.length > 1; // stacked v4+v6 → shrink both rows to stay compact
+
   return (
-    <div className="fluent-card reveal-target" style={{ padding: "8px 14px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 1, minWidth: 0 }}>
-      {lines.map((info) => {
+    <div className="fluent-card reveal-target" style={{ padding: "8px 14px", display: "flex", flexDirection: "column", justifyContent: "center", gap: dual ? 2 : 1, minWidth: dual ? 210 : 160 }}>
+      {ordered.map((info) => {
         // ASN + IP share one length-scaled monospace size so the two read as a
-        // consistent pair and a long IPv6 still fits.
-        const fs = ipFont(info.asn + info.ip);
+        // consistent pair and a long IPv6 still fits; when both families show at
+        // once, shrink both rows a step so the taller card stays tidy.
+        const fs = dual ? Math.max(ipFont(info.asn + info.ip) - 2, 9) : ipFont(info.asn + info.ip);
         return (
           <button
             key={info.ip}
@@ -114,7 +122,7 @@ function OutboundIpInline({ refreshSignal = 0 }: { refreshSignal?: number }) {
             title={`${info.asn ? info.asn + "  ·  " : ""}${info.ip}`}
             style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", maxWidth: "100%" }}
           >
-            <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1, fontFamily: "'Twemoji Country Flags', 'Segoe UI Emoji', sans-serif" }}>{countryCodeToFlag(info.country)}</span>
+            <span style={{ fontSize: dual ? 12 : 14, flexShrink: 0, lineHeight: 1, fontFamily: "'Twemoji Country Flags', 'Segoe UI Emoji', sans-serif" }}>{countryCodeToFlag(info.country)}</span>
             {info.asn && (
               <span style={{ fontFamily: "monospace", fontSize: fs, fontWeight: 700, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{info.asn}</span>
             )}
@@ -546,7 +554,11 @@ export function Dashboard() {
           </div>
         )}
         <OutboundIpInline refreshSignal={ipNonce} />
-        <ClashModeSelector onModeChanged={bumpIp} />
+        {/* Mode card pushed to the far right so the widened IP card and the
+            status/uptime cards get room to breathe on the left. */}
+        <div style={{ marginLeft: "auto", display: "flex" }}>
+          <ClashModeSelector onModeChanged={bumpIp} />
+        </div>
       </div>
 
       {/* Controls */}
