@@ -701,9 +701,13 @@ pub fn rollback(base_dir: &Path, expected_prev_sha: Option<&str>) -> Result<Opti
         }
     }
 
-    // Swap live <-> prev through the shared transient (CORE_OLD), so an
-    // interrupted rollback recovers via the same cleanup_leftovers path as an
-    // interrupted apply (live missing + `.old` present -> restore).
+    // Swap live <-> prev through the shared transient (CORE_OLD). A crash mid-swap
+    // is recovered by cleanup_leftovers: if it crashed before the new binary went
+    // in (live missing) the original is restored; if it crashed after (live
+    // present, `.old` still holding the replaced binary) the promotion to `.prev`
+    // is completed so the rollback target is never lost. The metadata, written
+    // last, can still lag the binary across a power-loss in that window (a
+    // recoverable, cosmetic version mislabel — see cleanup_leftovers).
     let live = base_dir.join(CORE_FILE);
     let old = base_dir.join(CORE_OLD);
     let _ = std::fs::remove_file(&old);
@@ -759,16 +763,35 @@ pub fn discard_staged(base_dir: &Path) {
     }
 }
 
-/// Startup recovery: if a prior apply/rollback was interrupted (live core missing
-/// but a `.old` backup present) restore it, then discard any cross-session staged
-/// artifacts. A `.new` from a previous session can no longer be integrity-checked
-/// (its in-memory hash is gone), so it is dropped rather than trusted. The durable
+/// Startup recovery for an apply/rollback that was interrupted mid-swap, then
+/// discard any cross-session staged artifacts. The transient `CORE_OLD` only
+/// exists if a swap crashed, and it always holds the binary that was live before
+/// the swap — a binary worth keeping, never garbage:
+///   - live MISSING + `.old` present: the new binary never landed → restore `.old`
+///     back to live (the original working core).
+///   - live PRESENT + `.old` present: the swap landed but the replaced binary
+///     wasn't promoted to the backup slot yet → finish the promotion (`.old` ->
+///     `CORE_PREV`) so the rollback target isn't permanently deleted.
+///
+/// A `.new` from a previous session can no longer be integrity-checked (its
+/// in-memory hash is gone), so it is dropped rather than trusted. The durable
 /// rollback backup (`CORE_PREV` + its build-info) is PRESERVED across sessions.
+///
+/// NOTE: this recovers the BINARIES; the metadata (written last in apply/rollback)
+/// can still lag by one version across a power-loss in the swap window. That is a
+/// recoverable, cosmetic mislabel — the live binary is always a genuine build —
+/// and self-heals on the next update check; full multi-file crash-atomicity would
+/// need a journal, out of scope here.
 pub fn cleanup_leftovers(base_dir: &Path) {
     let live = base_dir.join(CORE_FILE);
     let old = base_dir.join(CORE_OLD);
     if !live.exists() && old.exists() {
         let _ = std::fs::rename(&old, &live);
+    } else if old.exists() {
+        // live present + `.old` present → complete the interrupted promotion.
+        let prev = base_dir.join(CORE_PREV);
+        let _ = std::fs::remove_file(&prev);
+        let _ = std::fs::rename(&old, &prev);
     }
     for n in [
         CORE_OLD,

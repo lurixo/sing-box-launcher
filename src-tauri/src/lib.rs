@@ -538,13 +538,15 @@ async fn apply_installer_update(
     let expected = expected.ok_or_else(|| {
         AppError::Update("no verified installer staged; download it again".into())
     })?;
-    // Record the version we're replacing so a later rollback can re-download it.
-    // Written before spawn (while the local build-info still describes THIS
-    // version); whether it survives the NSIS reinstall is a real-machine caveat.
-    app_update::record_app_rollback(&base_dir);
     // Keep the deny-write/deny-delete handle (`_guard`) open across spawn so the
     // verified bytes are the executed bytes (closes the verify→execute TOCTOU).
     let (_guard, setup) = app_update::verify_staged_setup(&base_dir, &expected)?;
+    // Only AFTER the installer is verified (we're committed to running it) record
+    // the version it replaces, so a failed verify doesn't leave a stale rollback
+    // record offering a "rollback" to the still-current version. Written while the
+    // local build-info still describes THIS version; whether it survives the NSIS
+    // reinstall is a real-machine caveat.
+    app_update::record_app_rollback(&base_dir);
     app_update::spawn_installer(&setup)?;
     drop(_guard);
     mgr.lock().await.staged_setup_sha = None;

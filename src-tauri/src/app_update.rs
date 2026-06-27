@@ -466,8 +466,12 @@ pub fn rollback_portable(base_dir: &Path, expected_prev_sha: Option<&str>) -> Re
             ));
         }
     }
-    // Swap running exe <-> .prev through the shared transient (.old), so an
-    // interrupted rollback recovers via the same cleanup_leftovers path.
+    // Swap running exe <-> .prev through the transient (.old). Same one-rename
+    // self-brick window as the pre-existing portable apply swap: a power-loss
+    // after move-aside but before the .prev rename leaves the exe momentarily
+    // absent. Unlike the core path this can't auto-recover at startup (the missing
+    // exe is what would run cleanup_leftovers), but both `<exe>.old` and
+    // `<exe>.prev` are then preserved for a manual rename — no permanent loss.
     let old = with_suffix(&cur, ".old");
     let _ = std::fs::remove_file(&old);
     std::fs::rename(&cur, &old).map_err(|e| AppError::Update(format!("move running exe: {e}")))?;
@@ -854,6 +858,19 @@ pub async fn download_installer_update(
 /// version is what's downloaded; its setup.exe is verified against THAT release's
 /// build-info before `apply_installer_update` runs it (`/P /R`, with
 /// `allowDowngrades` letting NSIS install the older version over the newer).
+///
+/// SECURITY (bounded residual, not a bytes-integrity hole): the target version
+/// comes from `maestro-app-prev.json` in the user-writable data dir, which a
+/// non-elevated process can rewrite (the same data-dir-ACL residual as the staged
+/// files; the record must survive the NSIS reinstall, so it cannot carry an
+/// in-memory anchor). The WORST an attacker can force is a *user-confirmed,
+/// UAC-confirmed* downgrade to some OTHER genuine, repo-pinned, sha256-verified
+/// lurixo/Maestro release — never arbitrary bytes: `stage_installer` requires a
+/// non-empty `windows_setup_sha256` from the fetched release and verifies against
+/// it, `ensure_release_url` pins the asset to this repo, and `apply_installer_update`
+/// re-checks the in-memory hash under a deny-write handle held across spawn. The
+/// durable fix for the underlying tamperability is restrictive ACLs on the data
+/// dir (the deferred staged-file-ACL fast-follow).
 #[tauri::command]
 pub async fn download_installer_rollback(
     mgr: tauri::State<'_, crate::manager::Manager>,
