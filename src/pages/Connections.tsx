@@ -80,6 +80,7 @@ export function Connections() {
           {sorted.map((c) => (
             <div
               key={c.id}
+              className="row-reveal"
               style={{
                 display: "flex", alignItems: "center", gap: 12,
                 padding: "10px 14px", borderBottom: "1px solid var(--border-divider)",

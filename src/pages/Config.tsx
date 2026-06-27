@@ -197,7 +197,8 @@ export function Config() {
       while (taken.has(candidate)) candidate = `${name}-copy-${i++}`;
       await invoke("save_config", { name: candidate, content });
       await loadConfigList();
-      setConfigMsg({ type: "ok", text: t("config.duplicatedMsg", { name: candidate }) });
+      // No "copied" toast — the duplicate appears in the list immediately; a
+      // transient toast here only shifted the layout (round-9 H).
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
     }
@@ -284,15 +285,22 @@ export function Config() {
         )}
       </div>
 
+      {/* Floating overlay — never sits in the page flow, so showing/clearing it
+          can't resize the list or editor (round-9 H). Still click-to-jump for
+          validation errors. */}
       {configMsg && (
         <div
-          className={`infobar ${configMsg.type === "err" ? "error" : ""}`}
           onClick={errorLine != null ? () => editorRef.current?.jumpToLine(errorLine) : undefined}
           title={errorLine != null ? t("config.jumpToError", { line: errorLine }) : undefined}
           style={{
-            whiteSpace: "pre-wrap",
-            ...(errorLine != null ? { cursor: "pointer" } : {}),
-            ...(configMsg.type === "ok" ? { background: "var(--status-success-bg)", borderColor: "var(--status-success)" } : {}),
+            position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+            zIndex: 2000, maxWidth: "min(80vw, 640px)", padding: "8px 16px",
+            borderRadius: "var(--radius-md)", whiteSpace: "pre-wrap",
+            background: configMsg.type === "err" ? "var(--status-danger-bg)" : "var(--status-success-bg)",
+            border: `1px solid ${configMsg.type === "err" ? "var(--status-danger)" : "var(--status-success)"}`,
+            color: "var(--text-primary)", fontSize: 13,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.22)",
+            cursor: errorLine != null ? "pointer" : "default",
           }}
         >
           {configMsg.text}

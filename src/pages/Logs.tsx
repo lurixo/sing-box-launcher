@@ -124,6 +124,14 @@ export function Logs() {
     }
   }, [visible, autoScroll]);
 
+  // The export/copy notice is a floating overlay (below), so it never displaces
+  // the log view; auto-dismiss it so it doesn't linger.
+  useEffect(() => {
+    if (!exportMsg) return;
+    const id = setTimeout(() => setExportMsg(null), 2500);
+    return () => clearTimeout(id);
+  }, [exportMsg]);
+
   const handleClear = async () => {
     try {
       await invoke("clear_logs");
@@ -228,9 +236,30 @@ export function Logs() {
       className="animate-in"
       style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 16, height: "100%" }}
     >
-      <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
-        {t("logs.title")}
-      </h1>
+      {/* Level filter lives next to the title (not in the toolbar) so the toolbar
+          action row always fits on one line. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>
+          {t("logs.title")}
+        </h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("logs.minLevel")}</span>
+          <select
+            value={minLevel}
+            onChange={(e) => changeLevel(e.target.value as Level)}
+            title={t("logs.levelApplyHint")}
+            style={{
+              border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
+              padding: "4px 8px", fontSize: 12, background: "var(--bg-surface)",
+              color: "var(--text-primary)", outline: "none", height: 30, fontFamily: "inherit",
+            }}
+          >
+            {LEVELS.map((l) => (
+              <option key={l} value={l}>{l.toUpperCase()}</option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       {/* Toolbar — two groups: the left controls may wrap among themselves on a
           narrow window, but the right action group (copy / export / clear) is
@@ -241,24 +270,6 @@ export function Logs() {
           <div style={{ display: "flex", gap: 4 }}>
             {tabBtn("core", t("logs.core"))}
             {tabBtn("app", t("logs.app"))}
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t("logs.minLevel")}</span>
-            <select
-              value={minLevel}
-              onChange={(e) => changeLevel(e.target.value as Level)}
-              title={t("logs.levelApplyHint")}
-              style={{
-                border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",
-                padding: "4px 8px", fontSize: 12, background: "var(--bg-surface)",
-                color: "var(--text-primary)", outline: "none", height: 30, fontFamily: "inherit",
-              }}
-            >
-              {LEVELS.map((l) => (
-                <option key={l} value={l}>{l.toUpperCase()}</option>
-              ))}
-            </select>
           </div>
 
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", whiteSpace: "nowrap" }}>
@@ -316,12 +327,17 @@ export function Logs() {
         </div>
       </div>
 
+      {/* Floating overlay toast — does NOT sit in the column flow, so it never
+          shrinks/grows the log view (no layout shift on appear/disappear). */}
       {exportMsg && (
         <div
-          className="infobar"
           style={{
+            position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+            zIndex: 2000, padding: "8px 16px", borderRadius: "var(--radius-md)",
             background: exportMsg.ok ? "var(--status-success-bg)" : "var(--status-danger-bg)",
-            borderColor: exportMsg.ok ? "var(--status-success)" : "var(--status-danger)",
+            border: `1px solid ${exportMsg.ok ? "var(--status-success)" : "var(--status-danger)"}`,
+            color: "var(--text-primary)", fontSize: 13, pointerEvents: "none",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.22)",
           }}
         >
           {exportMsg.text}
@@ -348,7 +364,7 @@ export function Logs() {
           </div>
         ) : (
           visible.map((l) => (
-            <div key={l.seq} data-seq={l.seq} className="log-row" style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", alignItems: "flex-start", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
+            <div key={l.seq} data-seq={l.seq} className="log-row row-reveal" style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", alignItems: "flex-start", background: selected.has(l.seq) ? "var(--bg-subtle)" : undefined }}>
               <input
                 type="checkbox"
                 checked={selected.has(l.seq)}

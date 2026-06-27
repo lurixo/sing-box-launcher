@@ -116,7 +116,7 @@ function OutboundIpInline({ refreshSignal = 0, enabled = null }: { refreshSignal
   const dual = ordered.length > 1; // stacked v4+v6 → shrink both rows to stay compact
 
   return (
-    <div className="fluent-card reveal-target" style={{ padding: "8px 14px", display: "flex", flexDirection: "column", justifyContent: "center", gap: dual ? 2 : 1, minWidth: dual ? 210 : 160 }}>
+    <div className="fluent-card reveal-target" style={{ padding: "8px 14px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-start", gap: dual ? 2 : 1, flex: 1, minWidth: dual ? 210 : 160 }}>
       {ordered.map((info) => {
         // ASN + IP share one length-scaled monospace size so the two read as a
         // consistent pair and a long IPv6 still fits; when both families show at
@@ -563,7 +563,9 @@ export function Dashboard() {
       {/* Status row — a set of small reveal cards rather than one big card, so
           the highlight only lights the card under the cursor. */}
       <div style={{ display: "flex", alignItems: "stretch", gap: 12, flexWrap: "wrap" }}>
-        <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 8 }}>
+        {/* Fixed minWidth + centered so the status text (运行中 / 代理已启用 / 已停止)
+            never resizes the card as the state changes. */}
+        <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, minWidth: 130 }}>
           <span
             className={`status-dot ${
               status.running ? (status.proxy_enabled ? "proxy" : "running") : "stopped"
@@ -576,14 +578,18 @@ export function Dashboard() {
           </span>
         </div>
         {status.running && (
-          <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center" }}>
+          // Fixed width so the every-second uptime never resizes the card.
+          <div className="fluent-card reveal-target" style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", width: 132 }}>
             <Uptime />
           </div>
         )}
-        <OutboundIpInline refreshSignal={ipNonce} enabled={ipCardEnabled} />
-        {/* Mode card pushed to the far right so the widened IP card and the
-            status/uptime cards get room to breathe on the left. */}
-        <div style={{ marginLeft: "auto", display: "flex" }}>
+        {/* IP slot: always reserves the middle (flex:1) so the mode card stays
+            pinned right with a normal gap whether or not the IP card is shown;
+            the IP card itself (flex:1, content left) fills this slot when on. */}
+        <div style={{ flex: 1, display: "flex", minWidth: 0 }}>
+          <OutboundIpInline refreshSignal={ipNonce} enabled={ipCardEnabled} />
+        </div>
+        <div style={{ display: "flex" }}>
           <ClashModeSelector onModeChanged={bumpIp} />
         </div>
       </div>
@@ -614,6 +620,8 @@ export function Dashboard() {
             onClick={toggleProxy}
             disabled={!status.running || !status.proxy_server || loading}
             title={status.running && !status.proxy_server ? t("dashboard.noProxyServer") : undefined}
+            // Fixed width so the on/off label swap never resizes the button.
+            style={{ minWidth: 150, justifyContent: "center" }}
           >
             <ShieldCheckmarkRegular style={{ fontSize: 16 }} />
             {status.proxy_enabled ? t("dashboard.systemProxyOn") : t("dashboard.systemProxyOff")}
