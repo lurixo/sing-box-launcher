@@ -147,17 +147,24 @@ jobs:
           $exe = "src-tauri/target/release/Maestro.exe"
           $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
           $asset = "maestro-${{ steps.version.outputs.VERSION }}-windows-amd64v3-portable.zip"
+          # The NSIS installer was built earlier (bundle/nsis); hash it so the
+          # installed-build self-update can verify the setup.exe it downloads.
+          $setup = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter *-setup.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          $setupSha = if ($setup) { (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower() } else { "" }
+          $setupAsset = "maestro-${{ steps.version.outputs.VERSION }}-windows-amd64v3-setup.exe"
           $info = [ordered]@{
-            version        = "${{ steps.version.outputs.VERSION }}"
-            windows_asset  = $asset
-            windows_sha256 = $sha
-            built_at       = "${{ steps.stamp.outputs.BUILT_AT }}"
-            run_id         = "${{ github.run_id }}"
+            version              = "${{ steps.version.outputs.VERSION }}"
+            windows_asset        = $asset
+            windows_sha256       = $sha
+            windows_setup_asset  = $setupAsset
+            windows_setup_sha256 = $setupSha
+            built_at             = "${{ steps.stamp.outputs.BUILT_AT }}"
+            run_id               = "${{ github.run_id }}"
           }
-          # ASCII (no BOM) so serde_json on the client parses it cleanly. Hash is
-          # over Maestro.exe — the binary the portable self-update verifies and
-          # swaps in. windows_asset MUST equal the portable zip name below so the
-          # self-updater can find the package in this release.
+          # ASCII (no BOM) so serde_json on the client parses it cleanly. Hashes
+          # are over Maestro.exe (portable self-update verifies + swaps it in) and
+          # the *-setup.exe (installed self-update verifies + runs it). Both asset
+          # names MUST equal the published asset names so the updater can find them.
           $info | ConvertTo-Json | Set-Content -Path stage/maestro-build-info.json -Encoding ascii
           Write-Host ($info | ConvertTo-Json -Compress)
 
