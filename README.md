@@ -12,7 +12,7 @@
 
 ## Highlights
 
-- 🎛️ **One-click core control** — start, stop, and restart sing-box with automatic config injection; live status, uptime, and outbound IP at a glance.
+- 🎛️ **One-click core control** — start, stop, and restart sing-box with automatic config injection; live status, uptime, and an optional outbound-IP readout at a glance.
 - 🔀 **Switchable kernel sources** — ship-bundled **lurixo** by default, or pull builds on demand from **SagerNet** or **reF1nd**, all from inside the app.
 - ⬆️ **Self-updating & reversible** — both editions update in-app (the portable build swaps its own exe; the installer build downloads and runs a fresh `setup.exe`), SHA-256 verified, on your confirmation; the kernel updates independently. Every update — app **or** kernel — can be **rolled back** to the previous version.
 - 📈 **Live traffic overview** — upload and download on a single shared-axis chart, plus connection count, memory (Maestro + core), and cumulative totals.
@@ -43,7 +43,7 @@
 
 **Monitoring**
 - Traffic overview chart combining upload + download on one shared axis, with live speeds, active connection count, memory usage (Maestro + core), and cumulative up/down totals.
-- Outbound IP shown inline — click to copy.
+- Optional outbound-IP card (off by default, lurixo kernel only) — shows your proxy's exit IP inline, click to copy. Uses a third-party lookup; see [Privacy](#privacy).
 
 **Privacy & diagnostics**
 - Logs live **in memory only** and are never persisted. The core always records full detail; the in-app level filter only changes what you see.
@@ -91,7 +91,7 @@ Maestro is **Windows-only** and ships in two editions on the [Releases page](htt
 
 1. **Download** the [portable zip or installer](https://github.com/lurixo/Maestro/releases) and launch **Maestro**.
 2. On the **Dashboard**, add a config: click **New** to paste sing-box config JSON, or **Import** a `.json` file. Use **Check & Format** to validate it, then **Set Active**.
-3. Click **Start** to launch the core. Status, uptime, traffic, and your outbound IP appear live.
+3. Click **Start** to launch the core. Status, uptime, and traffic appear live (the outbound-IP card is off by default — enable it in **Settings → Outbound-IP card** on a lurixo kernel).
 4. Toggle **System Proxy** to route Windows apps through it (configs with only a TUN inbound don't need this — Maestro will tell you).
 5. Pick a node in the proxy groups on the Dashboard, or test node latency to choose the fastest.
 6. Close the window to send Maestro to the **tray** — the icon color tells you the state (gray / green / blue). Left-click the tray to bring the window back; right-click for quick start/stop/restart.
@@ -148,8 +148,8 @@ Maestro is built to keep your data on your machine:
 - **Logs are kept in memory only and are never written to disk.** View them live on the **Logs** page; the in-app level filter only changes the view (the core still records full detail).
 - **You choose what leaves memory.** Export only the log lines you select to a file of your choosing — the API secret and common credential fields (`password`, `uuid`, `private_key`, `psk`, `secret`, `token`, `auth_str`, `api_secret`) are best-effort redacted first.
 - **One-shot crash dump only.** A single, overwrite-only `crash-dump.txt` is written **only** when Maestro or the core actually crashes (or an unclean prior shutdown is detected at startup). It is redacted with the same rules and carries a banner warning that it may still contain network destinations from your session — review before sharing.
-- **No telemetry or analytics.** Maestro's only outbound requests are update checks and core/app downloads (to GitHub), the outbound-IP lookup described below, and the local API of your own running core.
-- **Outbound-IP lookup uses a third-party service.** The Dashboard's outbound-IP card shows your **proxy's exit IP**, country, and network (ASN). To resolve it, Maestro asks your running sing-box core to make a request **through your active proxy** to a third-party IP-geolocation service — so that service sees your proxy's exit IP (not your real address, since the request goes through the proxy). The lookup runs only while the Dashboard is open with the core running. The request is performed by the bundled core (its response format matches **[ip.sb](https://ip.sb/)**'s `geoip` API); the exact endpoint is determined by the bundled sing-box build.
+- **No telemetry or analytics.** Maestro's only outbound requests are update checks and core/app downloads (to GitHub), the **opt-in** outbound-IP lookup described below, and the local API of your own running core.
+- **Outbound-IP card is off by default and uses a third-party service.** The Dashboard's outbound-IP card is **opt-in** (turn it on in **Settings → Outbound-IP card**) and is only available on a **lurixo-branch kernel** (the lookup is a lurixo-specific capability; the toggle is greyed out on SagerNet/reF1nd kernels). **While it is disabled — the default — Maestro makes no such request at all.** When you enable it, the card shows your **proxy's exit IP**, country, and network (ASN); to resolve these the bundled core makes a request **through your active proxy** to a third-party IP-geolocation service — **IPv4 via [ipinfo.io](https://ipinfo.io/)** (falling back to **[ip.sb](https://ip.sb/)** if ipinfo is unreachable), **IPv6 via ip.sb**. That service therefore sees your **proxy's exit IP**, not your real address — unless your routing rules send this request outside the proxy. The lookup runs only while the Dashboard is open with the core running.
 
 ---
 
