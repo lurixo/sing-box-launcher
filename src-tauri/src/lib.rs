@@ -647,6 +647,7 @@ pub fn run() {
             settings::set_startup_delay,
             settings::set_disable_gpu_compositing,
             settings::set_kernel_source,
+            settings::set_kernel_channel,
             logbus::get_logs,
             logbus::clear_logs,
             logbus::export_logs,

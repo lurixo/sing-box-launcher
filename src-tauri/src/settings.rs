@@ -25,6 +25,10 @@ fn default_kernel_source() -> String {
     "lurixo".into()
 }
 
+fn default_kernel_channel() -> String {
+    "stable".into()
+}
+
 fn default_startup_delay() -> u32 {
     30
 }
@@ -37,6 +41,9 @@ pub const LANGS: [&str; 2] = ["en", "zh-CN"];
 
 /// Allowed kernel download sources (kept in sync with core_update::KernelSource).
 pub const KERNEL_SOURCES: [&str; 3] = ["lurixo", "sagernet", "ref1nd"];
+
+/// Allowed kernel release channels (kept in sync with core_update::KernelChannel).
+pub const KERNEL_CHANNELS: [&str; 2] = ["stable", "dev"];
 
 /// Persistent application settings stored in settings.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +81,10 @@ pub struct AppSettings {
     /// "sagernet" or "ref1nd". Drives the update-check + download logic.
     #[serde(default = "default_kernel_source")]
     pub kernel_source: String,
+    /// Release channel for the GitHub kernel sources: "stable" (newest release)
+    /// or "dev" (highest pre-release). Ignored by lurixo (single pipeline).
+    #[serde(default = "default_kernel_channel")]
+    pub kernel_channel: String,
 }
 
 impl Default for AppSettings {
@@ -91,6 +102,7 @@ impl Default for AppSettings {
             startup_delay_secs: default_startup_delay(),
             disable_gpu_compositing: false,
             kernel_source: default_kernel_source(),
+            kernel_channel: default_kernel_channel(),
         }
     }
 }
@@ -245,6 +257,20 @@ pub async fn set_kernel_source(
     let mgr = mgr.lock().await;
     let mut settings = load_settings(&mgr.base_dir);
     settings.kernel_source = source;
+    save_settings(&mgr.base_dir, &settings)
+}
+
+#[tauri::command]
+pub async fn set_kernel_channel(
+    mgr: tauri::State<'_, crate::manager::Manager>,
+    channel: String,
+) -> Result<(), AppError> {
+    if !KERNEL_CHANNELS.contains(&channel.as_str()) {
+        return Err(AppError::Config(format!("invalid kernel channel: {channel}")));
+    }
+    let mgr = mgr.lock().await;
+    let mut settings = load_settings(&mgr.base_dir);
+    settings.kernel_channel = channel;
     save_settings(&mgr.base_dir, &settings)
 }
 

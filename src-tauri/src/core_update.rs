@@ -21,12 +21,19 @@ const LURIXO_BUILD_INFO_URL: &str =
     "https://raw.githubusercontent.com/lurixo/sing-box-releases/dev/singbox-build-info.json";
 const LURIXO_RELEASE_BASE: &str = "https://github.com/lurixo/sing-box-releases/releases/download";
 
-/// SagerNet and reF1nd are read straight from the GitHub Releases API (all
-/// releases, pre-release and latest alike) and compared by semantic version.
+/// SagerNet and reF1nd are read from the GitHub Releases API on two channels:
+/// `stable` uses `/releases/latest` (GitHub's newest non-prerelease — a single
+/// fast fetch), `dev` lists the most recent releases and takes the highest
+/// pre-release semver. Each is compared by semantic version.
 const SAGERNET_RELEASES_API: &str =
-    "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=100";
+    "https://api.github.com/repos/SagerNet/sing-box/releases";
 const REF1ND_RELEASES_API: &str =
-    "https://api.github.com/repos/reF1nd/sing-box-releases/releases?per_page=100";
+    "https://api.github.com/repos/reF1nd/sing-box-releases/releases";
+
+/// How many recent releases to scan for the dev (pre-release) channel. Releases
+/// come back newest-first, so the highest pre-release semver is always near the
+/// top — 30 is plenty and far cheaper than the old per_page=100 full scan.
+const DEV_SCAN_LIMIT: u32 = 30;
 
 const BUILD_INFO_FILE: &str = "singbox-build-info.json";
 const KERNEL_META_FILE: &str = "installed_kernel.json";
@@ -62,7 +69,7 @@ impl KernelSource {
         }
     }
 
-    fn releases_api(self) -> &'static str {
+    fn releases_api_base(self) -> &'static str {
         match self {
             Self::Sagernet => SAGERNET_RELEASES_API,
             Self::Ref1nd => REF1ND_RELEASES_API,
@@ -79,6 +86,44 @@ impl KernelSource {
             Self::Ref1nd => "reF1nd/sing-box-releases",
         }
     }
+
+    /// Whether this source has separate stable/dev channels. lurixo ships a
+    /// single pre-release pipeline, so the channel dimension only applies to the
+    /// GitHub-Releases sources.
+    fn has_channels(self) -> bool {
+        matches!(self, Self::Sagernet | Self::Ref1nd)
+    }
+}
+
+/// The release channel for the GitHub-Releases sources: `stable` tracks the
+/// repo's published (non-prerelease) "latest", `dev` tracks the highest
+/// pre-release. lurixo ignores this (single pipeline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelChannel {
+    Stable,
+    Dev,
+}
+
+impl KernelChannel {
+    fn from_setting(s: &str) -> Self {
+        match s {
+            "dev" => Self::Dev,
+            _ => Self::Stable,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Dev => "dev",
+        }
+    }
+}
+
+/// The channel the user currently has selected (only meaningful for sources with
+/// `has_channels()`).
+fn current_channel(base_dir: &Path) -> KernelChannel {
+    KernelChannel::from_setting(&settings::load_settings(base_dir).kernel_channel)
 }
 
 /// The source the user currently has selected.
@@ -124,7 +169,7 @@ fn lurixo_is_newer(remote: &BuildInfo, local: &BuildInfo) -> bool {
 }
 
 async fn fetch_lurixo_remote() -> Result<(BuildInfo, String), AppError> {
-    let raw = http_client()
+    let raw = check_client()
         .get(LURIXO_BUILD_INFO_URL)
         .send()
         .await
@@ -158,6 +203,11 @@ fn lurixo_download_url(info: &BuildInfo) -> Result<String, AppError> {
 pub struct InstalledKernel {
     pub source: String,
     pub version: String,
+    /// "stable" / "dev" for the GitHub sources; empty for lurixo (single
+    /// pipeline). `#[serde(default)]` keeps older meta files (pre-channel)
+    /// readable — a missing channel is treated as "stable" when compared.
+    #[serde(default)]
+    pub channel: String,
     #[serde(default)]
     pub tag: String,
     #[serde(default)]
@@ -179,6 +229,7 @@ fn installed_kernel(base_dir: &Path) -> Option<InstalledKernel> {
     local_build_info(base_dir).map(|b| InstalledKernel {
         source: "lurixo".into(),
         version: b.version,
+        channel: String::new(),
         tag: String::new(),
         asset: String::new(),
     })
@@ -190,6 +241,9 @@ fn installed_kernel(base_dir: &Path) -> Option<InstalledKernel> {
 struct GhRelease {
     #[serde(default)]
     tag_name: String,
+    /// GitHub's pre-release flag — drives the stable/dev channel split.
+    #[serde(default)]
+    prerelease: bool,
     #[serde(default)]
     assets: Vec<GhAsset>,
 }
@@ -218,44 +272,94 @@ fn pick_windows_asset(rel: &GhRelease) -> Option<&GhAsset> {
         .or_else(|| rel.assets.iter().find(|a| a.name.ends_with("-windows-amd64.zip")))
 }
 
-/// Fetch all releases (pre-release and latest) for a source and return the one
-/// with the highest semantic version, alongside its parsed version.
-async fn fetch_latest_release(src: KernelSource) -> Result<(Version, GhRelease), AppError> {
-    let raw = http_client()
-        .get(src.releases_api())
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| AppError::Update(format!("fetch releases: {e}")))?
-        .error_for_status()
-        .map_err(|e| AppError::Update(format!("releases http: {e}")))?
-        .text()
-        .await
-        .map_err(|e| AppError::Update(format!("read releases: {e}")))?;
-    let releases: Vec<GhRelease> =
-        serde_json::from_str(&raw).map_err(|e| AppError::Update(format!("parse releases: {e}")))?;
+/// Fetch the latest release for a source on the given channel and return it with
+/// its parsed version. `stable` hits `/releases/latest` (one fast fetch, no
+/// pre-releases); `dev` scans the most recent releases and takes the highest
+/// pre-release semver.
+async fn fetch_latest_release(
+    src: KernelSource,
+    channel: KernelChannel,
+) -> Result<(Version, GhRelease), AppError> {
+    let base = src.releases_api_base();
+    match channel {
+        KernelChannel::Stable => {
+            // GitHub's "latest" endpoint already excludes pre-releases — exactly
+            // the stable channel, and a single object instead of a 100-item list.
+            let url = format!("{base}/latest");
+            let raw = check_client()
+                .get(&url)
+                .header("Accept", "application/vnd.github+json")
+                .send()
+                .await
+                .map_err(|e| AppError::Update(format!("fetch release: {e}")))?
+                .error_for_status()
+                .map_err(|_| AppError::Update("no stable release found for this source".into()))?
+                .text()
+                .await
+                .map_err(|e| AppError::Update(format!("read release: {e}")))?;
+            let rel: GhRelease = serde_json::from_str(&raw)
+                .map_err(|e| AppError::Update(format!("parse release: {e}")))?;
+            let v = parse_tag(&rel.tag_name)
+                .ok_or_else(|| AppError::Update("latest release has no parseable version".into()))?;
+            Ok((v, rel))
+        }
+        KernelChannel::Dev => {
+            let url = format!("{base}?per_page={DEV_SCAN_LIMIT}");
+            let raw = check_client()
+                .get(&url)
+                .header("Accept", "application/vnd.github+json")
+                .send()
+                .await
+                .map_err(|e| AppError::Update(format!("fetch releases: {e}")))?
+                .error_for_status()
+                .map_err(|e| AppError::Update(format!("releases http: {e}")))?
+                .text()
+                .await
+                .map_err(|e| AppError::Update(format!("read releases: {e}")))?;
+            let releases: Vec<GhRelease> = serde_json::from_str(&raw)
+                .map_err(|e| AppError::Update(format!("parse releases: {e}")))?;
 
-    let mut best: Option<(Version, GhRelease)> = None;
-    for rel in releases {
-        if let Some(v) = parse_tag(&rel.tag_name) {
-            match &best {
-                Some((bv, _)) if *bv >= v => {}
-                _ => best = Some((v, rel)),
+            let mut best: Option<(Version, GhRelease)> = None;
+            for rel in releases {
+                if !rel.prerelease {
+                    continue; // dev channel = pre-releases only
+                }
+                if let Some(v) = parse_tag(&rel.tag_name) {
+                    match &best {
+                        Some((bv, _)) if *bv >= v => {}
+                        _ => best = Some((v, rel)),
+                    }
+                }
             }
+            best.ok_or_else(|| AppError::Update("no pre-release (dev) builds found".into()))
         }
     }
-    best.ok_or_else(|| AppError::Update("no parseable releases found".into()))
 }
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
 
-fn http_client() -> Client {
+fn build_client(overall: Duration) -> Client {
     Client::builder()
-        .timeout(Duration::from_secs(180))
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(overall)
         .user_agent("maestro")
         .redirect(github_redirect_policy())
         .build()
         .unwrap_or_else(|_| Client::new())
+}
+
+/// Short-lived client for metadata checks (release JSON / build-info). A tight
+/// 20s deadline so a flaky network can't hang the "check for updates" spinner
+/// for the old 180s — the request is small and either answers fast or is retried.
+fn check_client() -> Client {
+    build_client(Duration::from_secs(20))
+}
+
+/// Generous client for the actual core download (tens of MB). The body is read
+/// incrementally with progress, so the only deadline that matters is this
+/// overall ceiling against a wholly stalled transfer.
+fn download_client() -> Client {
+    build_client(Duration::from_secs(600))
 }
 
 /// Follow redirects only while they stay on GitHub's own hosts, so a tampered
@@ -305,18 +409,41 @@ fn ensure_release_url(url: &str, repo: &str) -> Result<(), AppError> {
     }
 }
 
-async fn download_bytes(url: &str) -> Result<Vec<u8>, AppError> {
-    let bytes = http_client()
+/// Download the asset, reading the body chunk-by-chunk so we can emit live
+/// byte-progress (`received`/`total`) to the UI instead of blocking on one
+/// opaque `.bytes()` read. Uses `Response::chunk()` — no extra stream feature
+/// or dependency needed. Progress is throttled to ~every 512 KB to avoid an
+/// event storm on fast links.
+async fn download_streamed(
+    app: &tauri::AppHandle,
+    url: &str,
+    label: &str,
+) -> Result<Vec<u8>, AppError> {
+    let mut resp = download_client()
         .get(url)
         .send()
         .await
         .map_err(|e| AppError::Update(format!("download core: {e}")))?
         .error_for_status()
-        .map_err(|e| AppError::Update(format!("download http: {e}")))?
-        .bytes()
+        .map_err(|e| AppError::Update(format!("download http: {e}")))?;
+    let total = resp.content_length();
+    let mut buf: Vec<u8> = Vec::with_capacity(total.unwrap_or(0) as usize);
+    let mut received: u64 = 0;
+    let mut last_emit: u64 = 0;
+    emit_download_progress(app, label, 0, total);
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map_err(|e| AppError::Update(format!("read download: {e}")))?;
-    Ok(bytes.to_vec())
+        .map_err(|e| AppError::Update(format!("read download: {e}")))?
+    {
+        buf.extend_from_slice(&chunk);
+        received += chunk.len() as u64;
+        if received - last_emit >= 512 * 1024 || Some(received) == total {
+            last_emit = received;
+            emit_download_progress(app, label, received, total);
+        }
+    }
+    Ok(buf)
 }
 
 fn sha256_hex(data: &[u8]) -> String {
@@ -347,6 +474,20 @@ fn emit_progress(app: &tauri::AppHandle, stage: &str, message: &str) {
     let _ = app.emit(
         "core-update-progress",
         serde_json::json!({ "stage": stage, "message": message }),
+    );
+}
+
+/// Like `emit_progress` but carries byte counts so the UI can draw a real
+/// progress bar. `total` is None when the server sends no Content-Length.
+fn emit_download_progress(app: &tauri::AppHandle, label: &str, received: u64, total: Option<u64>) {
+    let _ = app.emit(
+        "core-update-progress",
+        serde_json::json!({
+            "stage": "downloading",
+            "message": format!("Downloading {label}"),
+            "received": received,
+            "total": total,
+        }),
     );
 }
 
@@ -474,7 +615,13 @@ pub struct CoreInfo {
     pub present: bool,
     /// The source the installed kernel came from ("lurixo" by default).
     pub source: String,
+    /// The channel the installed kernel came from ("stable"/"dev"; empty for
+    /// lurixo). Lets the UI tell when the in-use track differs from the selected.
+    pub channel: String,
     pub version: Option<String>,
+    /// The installed build's release tag (e.g. `v1.14.0-alpha.35`), for the
+    /// "view build TAG" affordance. None when nothing is installed.
+    pub tag: Option<String>,
 }
 
 #[tauri::command]
@@ -490,8 +637,20 @@ pub async fn get_core_info(
             .as_ref()
             .map(|k| k.source.clone())
             .unwrap_or_else(|| "lurixo".into()),
+        channel: installed
+            .as_ref()
+            .map(|k| k.channel.clone())
+            .unwrap_or_default(),
         version: if present {
-            installed.map(|k| k.version)
+            installed.as_ref().map(|k| k.version.clone())
+        } else {
+            None
+        },
+        tag: if present {
+            installed
+                .as_ref()
+                .map(|k| k.tag.clone())
+                .filter(|t| !t.is_empty())
         } else {
             None
         },
@@ -502,9 +661,32 @@ pub async fn get_core_info(
 pub struct CoreUpdateCheck {
     /// The selected source the check ran against.
     pub source: String,
+    /// The selected channel the check ran against ("stable"/"dev"; empty lurixo).
+    pub channel: String,
     pub current_version: Option<String>,
     pub latest_version: String,
+    /// The latest build's release tag (verbatim, e.g. `v1.14.0-alpha.35`).
+    pub latest_tag: String,
     pub update_available: bool,
+}
+
+/// Compare the installed kernel's track to the selected (source, channel). A
+/// mismatch means "you've switched tracks" — the check should always offer the
+/// selected track's build regardless of version ordering (cross-track version
+/// comparison is meaningless), and the UI greys "check" in favour of "download".
+fn track_changed(installed: Option<&InstalledKernel>, src: KernelSource, channel: KernelChannel) -> bool {
+    let Some(k) = installed else { return true };
+    if k.source != src.as_str() {
+        return true;
+    }
+    // Channel only distinguishes tracks for the GitHub sources.
+    if src.has_channels() {
+        let installed_channel = if k.channel.is_empty() { "stable" } else { k.channel.as_str() };
+        if installed_channel != channel.as_str() {
+            return true;
+        }
+    }
+    false
 }
 
 #[tauri::command]
@@ -513,47 +695,50 @@ pub async fn check_core_update(
 ) -> Result<CoreUpdateCheck, AppError> {
     let base_dir = mgr.lock().await.base_dir.clone();
     let src = current_source(&base_dir);
+    let channel = current_channel(&base_dir);
     let present = base_dir.join(CORE_FILE).exists();
     let installed = installed_kernel(&base_dir);
     let current_version = installed.as_ref().map(|k| k.version.clone());
-    // Switching to a different source must always offer to install it, even when
-    // its latest version isn't strictly newer than what's installed — comparing
-    // versions across sources is meaningless (e.g. SagerNet 1.13 vs lurixo 1.14).
-    let source_changed = installed
-        .as_ref()
-        .map(|k| k.source != src.as_str())
-        .unwrap_or(true);
+    // Switching source OR channel must always offer to install the selected
+    // track, even when its latest version isn't strictly newer than what's
+    // installed (comparing across tracks is meaningless).
+    let changed = track_changed(installed.as_ref(), src, channel);
+    let channel_str = if src.has_channels() { channel.as_str().to_string() } else { String::new() };
 
     match src {
         KernelSource::Lurixo => {
             let (latest, _) = fetch_lurixo_remote().await?;
             let local = local_build_info(&base_dir);
-            let update_available = source_changed
+            let update_available = changed
                 || match &local {
                     Some(l) if present => lurixo_is_newer(&latest, l),
                     _ => true,
                 };
+            let latest_tag = format!("v{}", latest.version);
             Ok(CoreUpdateCheck {
                 source: "lurixo".into(),
+                channel: channel_str,
                 current_version,
                 latest_version: latest.version,
+                latest_tag,
                 update_available,
             })
         }
         _ => {
-            // Highest semantic version across all of the source's releases
-            // (pre-release + latest), compared to what's installed.
-            let (latest, _) = fetch_latest_release(src).await?;
+            // Latest build on the selected channel, compared to what's installed.
+            let (latest, rel) = fetch_latest_release(src, channel).await?;
             let current_semver = current_version.as_deref().and_then(parse_tag);
-            let update_available = source_changed
+            let update_available = changed
                 || match (present, current_semver) {
                     (true, Some(c)) => latest > c,
                     _ => true,
                 };
             Ok(CoreUpdateCheck {
                 source: src.as_str().into(),
+                channel: channel_str,
                 current_version,
                 latest_version: latest.to_string(),
+                latest_tag: rel.tag_name.clone(),
                 update_available,
             })
         }
@@ -600,6 +785,7 @@ pub async fn download_kernel(
 ) -> Result<StagedKernel, AppError> {
     let base_dir = mgr.lock().await.base_dir.clone();
     let src = current_source(&base_dir);
+    let channel = current_channel(&base_dir);
 
     emit_progress(&app, "checking", "Fetching latest release");
     match src {
@@ -608,8 +794,7 @@ pub async fn download_kernel(
             let url = lurixo_download_url(&latest)?;
             ensure_release_url(&url, src.repo())?;
 
-            emit_progress(&app, "downloading", &format!("Downloading {}", latest.windows_asset));
-            let bytes = download_bytes(&url).await?;
+            let bytes = download_streamed(&app, &url, &latest.windows_asset).await?;
 
             emit_progress(&app, "verifying", "Verifying checksum");
             // lurixo is the trusted default source: a missing checksum means we
@@ -638,6 +823,7 @@ pub async fn download_kernel(
                 &InstalledKernel {
                     source: "lurixo".into(),
                     version: latest.version.clone(),
+                    channel: String::new(),
                     tag: format!("v{}", latest.version),
                     asset: latest.windows_asset.clone(),
                 },
@@ -651,17 +837,16 @@ pub async fn download_kernel(
             })
         }
         _ => {
-            let (version, rel) = fetch_latest_release(src).await?;
+            let (version, rel) = fetch_latest_release(src, channel).await?;
             let asset = pick_windows_asset(&rel)
                 .ok_or_else(|| AppError::Update("no windows-amd64 asset in latest release".into()))?;
             let (asset_name, asset_url) = (asset.name.clone(), asset.browser_download_url.clone());
             ensure_release_url(&asset_url, src.repo())?;
 
-            emit_progress(&app, "downloading", &format!("Downloading {asset_name}"));
             // SagerNet/reF1nd publish no upstream checksum; integrity rests on the
             // repository-pinned HTTPS download above plus the in-session re-verify
             // of the staged bytes at apply time.
-            let bytes = download_bytes(&asset_url).await?;
+            let bytes = download_streamed(&app, &asset_url, &asset_name).await?;
 
             emit_progress(&app, "extracting", "Extracting core");
             let core = extract_core(&bytes)?;
@@ -674,6 +859,7 @@ pub async fn download_kernel(
                 &InstalledKernel {
                     source: src.as_str().into(),
                     version: version.to_string(),
+                    channel: channel.as_str().into(),
                     tag: rel.tag_name.clone(),
                     asset: asset_name,
                 },
