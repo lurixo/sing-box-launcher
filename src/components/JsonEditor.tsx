@@ -106,7 +106,7 @@ export const JsonEditor = forwardRef<JsonEditorHandle, Props>(function JsonEdito
 
   return (
     <div
-      className="fluent-card reveal-target"
+      className="fluent-card"
       style={{
         display: "flex", flexDirection: "column", flex: 1, minHeight: 0,
         border: "1px solid var(--border-default)", borderRadius: "var(--radius-sm)",

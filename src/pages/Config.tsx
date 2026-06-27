@@ -293,13 +293,15 @@ export function Config() {
           onClick={errorLine != null ? () => editorRef.current?.jumpToLine(errorLine) : undefined}
           title={errorLine != null ? t("config.jumpToError", { line: errorLine }) : undefined}
           style={{
-            position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
-            zIndex: 2000, maxWidth: "min(80vw, 640px)", padding: "8px 16px",
+            position: "fixed", bottom: 24, right: 24,
+            zIndex: 2000, maxWidth: "min(70vw, 560px)", padding: "10px 16px",
             borderRadius: "var(--radius-md)", whiteSpace: "pre-wrap",
-            background: configMsg.type === "err" ? "var(--status-danger-bg)" : "var(--status-success-bg)",
+            // Opaque background so the editor text behind never bleeds through.
+            background: "var(--bg-card)",
             border: `1px solid ${configMsg.type === "err" ? "var(--status-danger)" : "var(--status-success)"}`,
+            borderLeft: `3px solid ${configMsg.type === "err" ? "var(--status-danger)" : "var(--status-success)"}`,
             color: "var(--text-primary)", fontSize: 13,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.22)",
+            boxShadow: "var(--shadow-dialog)",
             cursor: errorLine != null ? "pointer" : "default",
           }}
         >
