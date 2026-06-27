@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   DocumentRegular,
   ArrowImportRegular,
@@ -9,11 +9,20 @@ import {
   EditRegular,
   ArrowLeftRegular,
   DocumentCheckmarkRegular,
+  TextWrapRegular,
 } from "@fluentui/react-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { useReveal } from "../hooks/useReveal";
 import { useT } from "../i18n/strings";
+import { JsonEditor, type JsonEditorHandle } from "../components/JsonEditor";
 import type { ConfigEntry, CheckResult } from "../types";
+
+// Best-effort: pull a 1-based line number out of a sing-box check error
+// (`…config_format_tmp.json:LINE:COL: …`, or a generic "line N").
+function parseErrorLine(msg: string): number | null {
+  const m = msg.match(/\.json:(\d+)(?::\d+)?/) || msg.match(/\bline[ :]+(\d+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
 
 export function Config() {
   const t = useT();
@@ -30,6 +39,9 @@ export function Config() {
   const [newName, setNewName] = useState("");
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState("");
+  const [wrap, setWrap] = useState(true);
+  const [errorLine, setErrorLine] = useState<number | null>(null);
+  const editorRef = useRef<JsonEditorHandle>(null);
 
   const loadConfigList = useCallback(async () => {
     try {
@@ -92,6 +104,7 @@ export function Config() {
     if (!editingName) return;
     setChecking(true);
     setConfigMsg(null);
+    setErrorLine(null);
     try {
       const res = await invoke<CheckResult>("check_and_format_config", { content: configText });
       if (res.ok) {
@@ -102,6 +115,7 @@ export function Config() {
         setConfigMsg({ type: "ok", text: t("dashboard.checkOk") });
       } else {
         setConfigMsg({ type: "err", text: res.message });
+        setErrorLine(parseErrorLine(res.message));
       }
     } catch (e) {
       setConfigMsg({ type: "err", text: String(e) });
@@ -234,9 +248,18 @@ export function Config() {
       {configMsg && (
         <div
           className={`infobar ${configMsg.type === "err" ? "error" : ""}`}
-          style={configMsg.type === "ok" ? { background: "var(--status-success-bg)", borderColor: "var(--status-success)" } : undefined}
+          onClick={errorLine != null ? () => editorRef.current?.jumpToLine(errorLine) : undefined}
+          title={errorLine != null ? t("config.jumpToError", { line: errorLine }) : undefined}
+          style={{
+            whiteSpace: "pre-wrap",
+            ...(errorLine != null ? { cursor: "pointer" } : {}),
+            ...(configMsg.type === "ok" ? { background: "var(--status-success-bg)", borderColor: "var(--status-success)" } : {}),
+          }}
         >
           {configMsg.text}
+          {errorLine != null && (
+            <span style={{ marginLeft: 8, fontWeight: 600, opacity: 0.85 }}>→ {t("config.jumpToError", { line: errorLine })}</span>
+          )}
         </div>
       )}
 
@@ -288,6 +311,15 @@ export function Config() {
               <EditRegular style={{ fontSize: 16 }} />
               {t("common.rename")}
             </button>
+            <button
+              className={`fluent-btn reveal-target ${wrap ? "accent" : ""}`}
+              onClick={() => setWrap((w) => !w)}
+              title={t("config.wrap")}
+              aria-label={t("config.wrap")}
+              style={{ fontSize: 13 }}
+            >
+              <TextWrapRegular style={{ fontSize: 16 }} />
+            </button>
             {!isEditingActive && (
               <button className="fluent-btn reveal-target" onClick={() => handleDelete(editingName)} style={{ fontSize: 13, color: "var(--status-danger)" }}>
                 <DeleteRegular style={{ fontSize: 16 }} />
@@ -327,24 +359,15 @@ export function Config() {
             </div>
           )}
 
-          <textarea
+          <JsonEditor
+            ref={editorRef}
             value={configText}
-            onChange={(e) => { setConfigText(e.target.value); setConfigDirty(true); setConfigMsg(null); }}
-            spellCheck={false}
-            placeholder={t("dashboard.editorPlaceholder")}
-            style={{
-              width: "100%", flex: 1, minHeight: 0, resize: "none",
-              fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
-              fontSize: 12, lineHeight: 1.5, padding: 12,
-              borderRadius: "var(--radius-sm)", border: "1px solid var(--border-default)",
-              background: "var(--bg-surface)", color: "var(--text-primary)",
-              outline: "none", tabSize: 2,
-            }}
-            onFocus={(e) => (e.target.style.borderColor = "var(--accent-default)")}
-            onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
+            onChange={(v) => { setConfigText(v); setConfigDirty(true); setConfigMsg(null); setErrorLine(null); }}
+            onSave={handleSaveConfig}
+            wrap={wrap}
           />
 
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", flexShrink: 0 }}>
             {t("dashboard.editorHint")}
           </div>
         </div>
